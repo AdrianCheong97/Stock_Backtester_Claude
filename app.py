@@ -330,8 +330,9 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         curr_body  = d["body"].iloc[i]
         is_bull    = curr_close > d["Open"].iloc[i]
 
-        ema_aligned   = ema_fast > ema_mid > ema_slow
-        strong_candle = is_bull and (curr_body > params["body_factor"] * curr_atr)
+        ema_aligned   = ema_fast > ema_mid > ema_slow # overwritten
+        ema_aligned   = ema_fast > ema_mid 
+        strong_candle = is_bull and (curr_body > params["body_factor"] * curr_atr)  # overwritten
         strong_candle = is_bull and d["Open"].iloc[i] < ema_fast and curr_close > ema_fast
         don_breakout  = (prev_close < don_u_prev) and (curr_close > don_u_prev)
 
