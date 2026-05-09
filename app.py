@@ -332,8 +332,9 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         curr_atr   = d["ATR14"].iloc[i]
         curr_body  = d["body"].iloc[i]
         is_bull    = curr_close > d["Open"].iloc[i]
-
-        ema_aligned   = ema_fast > ema_mid > ema_slow # overwritten
+        curr_low = d["Low"].iloc[i]
+        
+        ema_aligned   = ema_fast > ema_mid > ema_slow  # overwritten
         ema_aligned   = ema_fast > ema_mid 
         strong_candle = is_bull and (curr_body > params["body_factor"] * curr_atr)  # overwritten
         strong_candle = is_bull and d["Open"].iloc[i] < d["ema_fast"].iloc[i] and d["Close"].iloc[i] > d["ema_fast"].iloc[i] 
@@ -341,7 +342,7 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         gap_up        = (curr_close > curr_open) and (prev_close < prev_open)
         
         if not in_trade:
-            if ema_aligned and strong_candle or gap_up: # and on_breakout: 
+            if ema_aligned and (strong_candle or gap_up) and curr_low > ema_slow: # and don_breakout: 
                 d.iloc[i, d.columns.get_loc("signal")] = 1
                 in_trade         = True
                 high_since_entry = curr_close
