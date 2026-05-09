@@ -273,13 +273,14 @@ def strategy_ema_cross(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         prev_diff = d["EMA_F"].iloc[i - 1] - d["EMA_S"].iloc[i - 1]
         curr_diff = d["EMA_F"].iloc[i]     - d["EMA_S"].iloc[i]
         rsi_ok    = (d["RSI14"].iloc[i] > 50) if params.get("rsi_confirm") else True
+        curr_EMA_F = d["EMA_F"].iloc[i] 
 
         if not in_trade:
             if prev_diff < 0 and curr_diff > 0 and rsi_ok:
                 d.iloc[i, d.columns.get_loc("signal")] = 1
                 in_trade = True
         else:
-            if prev_diff > 0 and curr_diff < 0:
+            if (prev_diff > 0 and curr_diff) < 0 or (d["Close"].iloc[i] < curr_EMA_F):
                 d.iloc[i, d.columns.get_loc("signal")] = -1
                 in_trade = False
     return d
