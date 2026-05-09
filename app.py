@@ -732,9 +732,9 @@ Institutional-grade long-term trend confirmation.
 with t4:
     st.markdown("""
 **★ Custom — Donchian Channel + Multi-EMA Stack + Candle Breakout**
-A breakout-momentum hybrid — your editable starting point.
-- 🟢 **Entry**: Close breaks above Donchian upper band *AND* ema_fast > ema_mid > ema_slow aligned *AND* breakout candle body > ATR × factor
-- 🔴 **Exit**: Close below Donchian midline, ema_mid, or ATR trailing stop from swing high
+A breakout-momentum hybrid. - NOTED DONCHIAN AND ATR DISABLED FOR TESTING
+- 🟢 **Entry**: PRICE > EMA_FAST AND IF GAP UP ABOVE EMA FAST
+- 🔴 **Exit**: PRICE BREAKDOWN THROUGH EMA_FAST
 - **Customise**: Edit `strategy_custom()` in `app.py`. All parameters are tunable in the sidebar.
 """)
 
