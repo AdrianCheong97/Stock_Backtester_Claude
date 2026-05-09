@@ -322,6 +322,7 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
 
     for i in range(1, len(d)):
         prev_close = d["Close"].iloc[i - 1]
+        prev_open  = d["Open"].iloc[i - 1]
         curr_close = d["Close"].iloc[i]
         curr_open = d["Open"].iloc[i]
         don_u_prev = d["DON_U"].iloc[i - 1]   # shifted to avoid lookahead
@@ -338,6 +339,7 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         strong_candle = is_bull and d["Open"].iloc[i] < d["ema_fast"].iloc[i] and d["Close"].iloc[i] > d["ema_fast"].iloc[i] 
         don_breakout  = (prev_close < don_u_prev) and (curr_close > don_u_prev)
         gap_up        = (curr_close > curr_open) and (prev_close < prev_open)
+        
         if not in_trade:
             if ema_aligned and strong_candle or gap_up: # and on_breakout: 
                 d.iloc[i, d.columns.get_loc("signal")] = 1
