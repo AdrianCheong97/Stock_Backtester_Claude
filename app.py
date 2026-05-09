@@ -668,8 +668,8 @@ with st.sidebar:
         )
         params["donchian_period"] = st.slider("Donchian Period",   10,  55, 20)
         params["ema_fast"]        = st.slider("EMA Fast (stack)",   5,  20,  8)
-        params["ema_mid"]         = st.slider("EMA Mid (stack)",   15,  34, 21)
-        params["ema_slow"]        = st.slider("EMA Slow (stack)",  34, 100, 55)
+        params["ema_mid"]         = st.slider("EMA Mid (stack)",   15,  50, 21)
+        params["ema_slow"]        = st.slider("EMA Slow (stack)",  34, 200, 55)
         params["body_factor"]     = st.slider("Body/ATR Filter",  0.2, 1.5, 0.6, 0.05)
         params["atr_trail"]       = st.slider("ATR Trailing Stop",0.5, 5.0, 2.0, 0.25)
 
