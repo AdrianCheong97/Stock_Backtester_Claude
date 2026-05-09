@@ -506,10 +506,10 @@ def chart_price(df: pd.DataFrame, result: dict, title: str) -> go.Figure:
 
     if "BB_L" in df.columns and "BB_U" in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df["BB_U"], fill=None,
-                                 line=dict(color="#388bfd22", width=0), showlegend=False), row=1, col=1)
+                                line=dict(color="#388bfd", width=0), showlegend=False), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df["BB_L"], fill="tonexty",
-                                 fillcolor="#388bfd11", line=dict(color="#388bfd22", width=0),
-                                 showlegend=False), row=1, col=1)
+                                fillcolor="rgba(56, 139, 253, 0.07)", line=dict(color="#388bfd", width=0),
+                                showlegend=False), row=1, col=1)
 
     # Trade markers
     if not trade_df.empty:
