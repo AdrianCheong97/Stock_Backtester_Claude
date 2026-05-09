@@ -332,6 +332,7 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
 
         ema_aligned   = ema_fast > ema_mid > ema_slow
         strong_candle = is_bull and (curr_body > params["body_factor"] * curr_atr)
+        strong_candle = is_bull and d["Open"].iloc[i] < ema_fast and curr_close > ema_fast
         don_breakout  = (prev_close < don_u_prev) and (curr_close > don_u_prev)
 
         if not in_trade:
