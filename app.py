@@ -338,7 +338,7 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         don_breakout  = (prev_close < don_u_prev) and (curr_close > don_u_prev)
 
         if not in_trade:
-            if don_breakout and ema_aligned and strong_candle:
+            if ema_aligned and strong_candle: # and on_breakout: 
                 d.iloc[i, d.columns.get_loc("signal")] = 1
                 in_trade         = True
                 high_since_entry = curr_close
