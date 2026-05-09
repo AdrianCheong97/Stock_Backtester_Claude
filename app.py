@@ -827,7 +827,7 @@ if run_btn:
         if not tdf.empty:
             def _style_pnl(val):
                 return f"color: {'#3fb950' if val > 0 else '#f85149'}"
-            styled = tdf.style.applymap(_style_pnl, subset=["P&L ($)", "P&L (%)"])
+            styled = tdf.style.map(_style_pnl, subset=["P&L ($)", "P&L (%)"])
             st.dataframe(styled, use_container_width=True, hide_index=True)
             st.download_button(
                 "⬇  Download Trade Log (CSV)",
