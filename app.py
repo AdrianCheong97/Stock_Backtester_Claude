@@ -296,12 +296,12 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     │  DEFAULT LOGIC:                                            │
     │  Entry conditions (ALL must be true):                      │
     │    1. Donchian breakout — close > prior N-bar upper band   │
-    │    2. EMA stack aligned — EMA8 > EMA21 > EMA55             │
+    │    2. EMA stack aligned — ema_fast > ema_mid > ema_slow             │
     │    3. Strong candle     — body size > ATR × body_factor    │
     │                                                            │
     │  Exit conditions (ANY triggers exit):                      │
     │    1. Close below Donchian midline                         │
-    │    2. Close below EMA21                                    │
+    │    2. Close below ema_mid                                    │
     │    3. ATR trailing stop from swing high                    │
     └────────────────────────────────────────────────────────────┘
     """
@@ -309,9 +309,9 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     n  = params["donchian_period"]
 
     d["DON_U"], d["DON_L"], d["DON_M"] = donchian(d["High"], d["Low"], n)
-    d["EMA8"]   = ema(d["Close"], params["ema_fast"])
-    d["EMA21"]  = ema(d["Close"], params["ema_mid"])
-    d["EMA55"]  = ema(d["Close"], params["ema_slow"])
+    d["ema_fast"]   = ema(d["Close"], params["ema_fast"])
+    d["ema_mid"]  = ema(d["Close"], params["ema_mid"])
+    d["ema_slow"]  = ema(d["Close"], params["ema_slow"])
     d["ATR14"]  = atr(d, 14)
     d["body"]   = (d["Close"] - d["Open"]).abs()
     d["signal"] = 0
@@ -323,14 +323,14 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         prev_close = d["Close"].iloc[i - 1]
         curr_close = d["Close"].iloc[i]
         don_u_prev = d["DON_U"].iloc[i - 1]   # shifted to avoid lookahead
-        ema8       = d["EMA8"].iloc[i]
-        ema21      = d["EMA21"].iloc[i]
-        ema55      = d["EMA55"].iloc[i]
+        ema_fast       = d["ema_fast"].iloc[i]
+        ema_mid      = d["ema_mid"].iloc[i]
+        ema_slow      = d["ema_slow"].iloc[i]
         curr_atr   = d["ATR14"].iloc[i]
         curr_body  = d["body"].iloc[i]
         is_bull    = curr_close > d["Open"].iloc[i]
 
-        ema_aligned   = ema8 > ema21 > ema55
+        ema_aligned   = ema_fast > ema_mid > ema_slow
         strong_candle = is_bull and (curr_body > params["body_factor"] * curr_atr)
         don_breakout  = (prev_close < don_u_prev) and (curr_close > don_u_prev)
 
@@ -344,7 +344,7 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
             trail_stop       = high_since_entry - params["atr_trail"] * curr_atr
             don_mid          = d["DON_M"].iloc[i]
 
-            if curr_close < trail_stop or curr_close < ema21 or curr_close < don_mid:
+            if curr_close < trail_stop or curr_close < ema_mid or curr_close < don_mid:
                 d.iloc[i, d.columns.get_loc("signal")] = -1
                 in_trade = False
     return d
@@ -488,9 +488,9 @@ def chart_price(df: pd.DataFrame, result: dict, title: str) -> go.Figure:
 
     # Indicator overlays
     overlay_cfg = {
-        "EMA8":   ("#58a6ff", 1),  
-        "EMA21":  ("#d2a8ff", 1),  
-        "EMA55":  ("#ffa657", 1),
+        "ema_fast":   ("#58a6ff", 1),  
+        "ema_mid":  ("#d2a8ff", 1),  
+        "ema_slow":  ("#ffa657", 1),
         "EMA_F":  ("#58a6ff", 1.5),
         "EMA_S":  ("#ffa657", 1.5),
         "BB_M":   ("#388bfd", 1),  
@@ -726,8 +726,8 @@ with t4:
     st.markdown("""
 **★ Custom — Donchian Channel + Multi-EMA Stack + Candle Breakout**
 A breakout-momentum hybrid — your editable starting point.
-- 🟢 **Entry**: Close breaks above Donchian upper band *AND* EMA8 > EMA21 > EMA55 aligned *AND* breakout candle body > ATR × factor
-- 🔴 **Exit**: Close below Donchian midline, EMA21, or ATR trailing stop from swing high
+- 🟢 **Entry**: Close breaks above Donchian upper band *AND* ema_fast > ema_mid > ema_slow aligned *AND* breakout candle body > ATR × factor
+- 🔴 **Exit**: Close below Donchian midline, ema_mid, or ATR trailing stop from swing high
 - **Customise**: Edit `strategy_custom()` in `app.py`. All parameters are tunable in the sidebar.
 """)
 
