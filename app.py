@@ -276,7 +276,7 @@ def strategy_ema_cross(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         curr_EMA_F = d["EMA_F"].iloc[i] 
 
         if not in_trade:
-            if (d["Close"].iloc[i] > curr_EMA_F and d["Open"].iloc[i] < curr_EMA_F and curr_diff > 0 and rsi_ok) or (prev_diff < 0 and curr_diff > 0 and rsi_ok):
+            if (d["Close"].iloc[i] > curr_EMA_F and d["Open"].iloc[i] < curr_EMA_F and curr_diff > 0 and rsi_ok): #or (prev_diff < 0 and curr_diff > 0 and rsi_ok):
                 d.iloc[i, d.columns.get_loc("signal")] = 1
                 in_trade = True
         else:
