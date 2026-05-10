@@ -771,7 +771,7 @@ if run_screen_btn:
                             f"<b>{t}</b> — {row_data['Name']}<br>"
                             f"Price: ${row_data['Price']}<br>"
                             f"1M: {ret:+.1f}%  |  RSI: {rsi_v if pd.notna(rsi_v) else '—'}<br>"
-                            f"Sharpe: {sh:.2f if pd.notna(sh) else '—'}<br>"
+                            f"Sharpe: {f'{sh:.2f}' if pd.notna(sh) else '—'}<br>"
                             f"Sector: {sec}"
                         )
                     else:
