@@ -380,16 +380,16 @@ def run_backtest(df: pd.DataFrame,
     trades      = []
     equity      = []
 
-    for i in range(len(df)):
-        sig        = df["signal"].iloc[i]
+    for idx, row in df.iterrows():
+        sig   = row["signal"]
+        price = row["Close"]
         exec_price = df["Open"].iloc[i + 1] if i + 1 < len(df) else df["Close"].iloc[i]
-        price = df["Close"].iloc[i]
         if sig == 1 and shares == 0:
             invest     = capital * position_size_pct
             commission = invest * commission_pct
-            shares     = (invest - commission) / exec_price   
+            shares     = (invest - commission) / exec_price
             entry_price = exec_price
-            entry_date  = i
+            entry_date  = idx
             capital    -= invest
 
         elif sig == -1 and shares > 0:
@@ -401,17 +401,17 @@ def run_backtest(df: pd.DataFrame,
             capital   += net
             trades.append({
                 "Entry Date":      entry_date,
-                "Exit Date":       i,
+                "Exit Date":       idx,
                 "Entry Price":     round(entry_price, 4),
                 "Exit Price":      round(price, 4),
                 "Shares":          round(shares, 4),
                 "P&L ($)":         round(pnl, 2),
                 "P&L (%)":         round(pnl_pct, 2),
-                "Duration (days)": (i - entry_date).days,
+                "Duration (days)": (idx - entry_date).days,
             })
             shares = 0.0
 
-        equity.append({"Date": i,
+        equity.append({"Date": idx,
                         "Equity": capital + (shares * price if shares > 0 else 0)})
 
     # Close any open position at last price
