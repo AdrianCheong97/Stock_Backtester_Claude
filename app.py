@@ -383,7 +383,7 @@ def run_backtest(df: pd.DataFrame,
     for i in range(len(df)):
         sig        = df["signal"].iloc[i]
         exec_price = df["Open"].iloc[i + 1] if i + 1 < len(df) else df["Close"].iloc[i]
-
+        price = df["Close"].iloc[i]
         if sig == 1 and shares == 0:
             invest     = capital * position_size_pct
             commission = invest * commission_pct
