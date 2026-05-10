@@ -389,7 +389,7 @@ def run_backtest(df: pd.DataFrame,
             commission = invest * commission_pct
             shares     = (invest - commission) / price
             entry_price = exec_price
-            entry_date  = idx
+            entry_date  = i
             capital    -= invest
 
         elif sig == -1 and shares > 0:
@@ -401,17 +401,17 @@ def run_backtest(df: pd.DataFrame,
             capital   += net
             trades.append({
                 "Entry Date":      entry_date,
-                "Exit Date":       idx,
+                "Exit Date":       i,
                 "Entry Price":     round(entry_price, 4),
                 "Exit Price":      round(price, 4),
                 "Shares":          round(shares, 4),
                 "P&L ($)":         round(pnl, 2),
                 "P&L (%)":         round(pnl_pct, 2),
-                "Duration (days)": (idx - entry_date).days,
+                "Duration (days)": (i - entry_date).days,
             })
             shares = 0.0
 
-        equity.append({"Date": idx,
+        equity.append({"Date": i,
                         "Equity": capital + (shares * price if shares > 0 else 0)})
 
     # Close any open position at last price
