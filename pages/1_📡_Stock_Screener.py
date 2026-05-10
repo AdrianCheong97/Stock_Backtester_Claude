@@ -823,8 +823,11 @@ if run_screen_btn:
             fig_heat.update_layout(
                 paper_bgcolor=BG, height=500,
                 coloraxis_colorbar=dict(
-                    title="1M%", tickfont=dict(color=MUTED),
-                    titlefont=dict(color=MUTED),
+                    title=dict(
+                        text="1M%", 
+                        font=dict(color=MUTED)
+                    ),
+                    tickfont=dict(color=MUTED),
                 ),
                 margin=dict(l=0, r=0, t=30, b=0),
             )
