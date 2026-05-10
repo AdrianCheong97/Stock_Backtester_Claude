@@ -532,26 +532,25 @@ if run_screen_btn:
         st.stop()
 
     # ── Apply Filters ────────────────────────────────────────────────────
-    mask = pd.Series([True] * len(df_results), index=df_results.index)
-
-    def safe_filter(col, lo=None, hi=None):
-        nonlocal mask
+    def safe_filter(mask, col, lo=None, hi=None):
         if col not in df_results.columns:
-            return
+            return mask
         s = pd.to_numeric(df_results[col], errors="coerce")
-        if lo is not None: mask &= s.fillna(-np.inf)  >= lo
-        if hi is not None: mask &= s.fillna(np.inf)   <= hi
+        if lo is not None: mask = mask & (s.fillna(-np.inf) >= lo)
+        if hi is not None: mask = mask & (s.fillna(np.inf)  <= hi)
+        return mask
 
-    safe_filter("Price",         lo=price_min,    hi=price_max)
-    safe_filter("1D %",          lo=ret1d_min,    hi=ret1d_max)
-    safe_filter("1M %",          lo=ret1m_min,    hi=ret1m_max)
-    safe_filter("3M %",          lo=ret3m_min,    hi=ret3m_max)
-    safe_filter("RSI(14)",       lo=rsi_min,      hi=rsi_max)
-    safe_filter("Volatility(30D)%", hi=vol_max)
-    safe_filter("ATR%",          hi=atr_max)
-    safe_filter("Vol/Avg20",     lo=vol_ratio_min)
-    safe_filter("Sharpe(1Y)",    lo=sharpe_min,   hi=sharpe_max)
-    safe_filter("Trend Score",   lo=trend_min)
+    mask = pd.Series([True] * len(df_results), index=df_results.index)
+    mask = safe_filter(mask, "Price",            lo=price_min,     hi=price_max)
+    mask = safe_filter(mask, "1D %",             lo=ret1d_min,     hi=ret1d_max)
+    mask = safe_filter(mask, "1M %",             lo=ret1m_min,     hi=ret1m_max)
+    mask = safe_filter(mask, "3M %",             lo=ret3m_min,     hi=ret3m_max)
+    mask = safe_filter(mask, "RSI(14)",          lo=rsi_min,       hi=rsi_max)
+    mask = safe_filter(mask, "Volatility(30D)%", hi=vol_max)
+    mask = safe_filter(mask, "ATR%",             hi=atr_max)
+    mask = safe_filter(mask, "Vol/Avg20",        lo=vol_ratio_min)
+    mask = safe_filter(mask, "Sharpe(1Y)",       lo=sharpe_min,    hi=sharpe_max)
+    mask = safe_filter(mask, "Trend Score",      lo=trend_min)
 
     if macd_filter == "Bullish only":
         mask &= df_results["MACD Bull"] == True
