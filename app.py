@@ -387,7 +387,7 @@ def run_backtest(df: pd.DataFrame,
         if sig == 1 and shares == 0:
             invest     = capital * position_size_pct
             commission = invest * commission_pct
-            shares     = (invest - commission) / price
+            shares     = (invest - commission) / exec_price   
             entry_price = exec_price
             entry_date  = i
             capital    -= invest
