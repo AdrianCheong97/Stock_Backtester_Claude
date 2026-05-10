@@ -555,6 +555,9 @@ def chart_price(df: pd.DataFrame, result: dict, title: str) -> go.Figure:
     elif "RSI14" in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df["RSI14"],
                                  line=dict(color="#d2a8ff", width=1.2), name="RSI"), row=3, col=1)
+    elif "ATR14" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["ATR14"],
+                                 line=dict(color="#d2a8ff", width=1.2), name="ATR"), row=3, col=1)
 
     fig.update_layout(
         title=dict(text=f"<b>{title}</b>",
