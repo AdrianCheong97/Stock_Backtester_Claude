@@ -727,21 +727,29 @@ def plot_backtest(df: pd.DataFrame, trades: pd.DataFrame, ticker: str):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                        vertical_spacing=0.03, row_heights=[0.7, 0.3])
 
-    # Add custom hover text with XGBoost predictions
-    hover_text = []
+    # Create the custom labels for the popup box
+    hover_labels = []
     for i in range(len(df)):
-        pred = df['xgb_pred'].iloc[i] if 'xgb_pred' in df.columns else "N/A"
-        txt = (f"Date: {df.index[i].date()}<br>"
-               f"Close: {df['Close'].iloc[i]:.2f}<br>"
-               f"<span style='color:#58a6ff;'><b>AI Prediction: {pred}</b></span><br>"
-        f"<span style='color:#58a6ff;'><b>Confidence: {conf*100:.1f}%</b></span>"
-    )
-        hover_text.append(txt)
+        # Get values or set defaults if the model didn't run for a specific row
+        p_val = df['xgb_pred'].iloc[i] if 'xgb_pred' in df.columns else "N/A"
+        c_val = df['xgb_conf'].iloc[i] if 'xgb_conf' in df.columns else 0.0
+        
+        # Build a string with HTML-like formatting for Plotly
+        label = (
+            f"Date: {df.index[i].date()}<br>"
+            f"Close: {df['Close'].iloc[i]:.2f}<br>"
+            f"<span style='color:#58a6ff;'><b>AI Pred: {p_val}</b></span><br>"
+            f"<span style='color:#58a6ff;'><b>Confidence: {c_val*100:.1f}%</b></span>"
+        )
+        hover_labels.append(label)
 
-    # Candlestick
+    # UPDATED TRACE:
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-        name=ticker, hovertext=hover_text, hoverinfo="text"
+        x=df.index,
+        open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+        name="Price",
+        hovertext=hover_labels, # Add your list here
+        hoverinfo="text"       # THIS IS THE KEY: tells Plotly to show ONLY your text
     ), row=1, col=1)
 
     # ... (Rest of existing plotting logic for Buy/Sell arrows)
