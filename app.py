@@ -685,7 +685,7 @@ def build_xgboost_features(d: pd.DataFrame):
     df["EMA20_x_EMA50"] = (df["EMA_20"] > df["EMA_50"]).astype(int)
     df["DC_pos"] = (df["Close"] - df["DC_lower"]) / df["DC_width"]
     
-    return d
+    return df
 
 def get_xgb_predictions(df: pd.DataFrame):
     """Loads model and returns predicted classes."""
