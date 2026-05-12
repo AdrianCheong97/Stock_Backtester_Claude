@@ -643,6 +643,7 @@ def build_xgboost_features(d: pd.DataFrame):
     df["Sharpe"] = (ret.rolling(20).mean() / ret.rolling(20).std()) * np.sqrt(252)
     
     # Alpha/Beta (vs SPY)
+    import yfinance as yf
     spy = yf.download("SPY", start=df.index[0], end=df.index[-1], auto_adjust=True, progress=False)
     if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
     
