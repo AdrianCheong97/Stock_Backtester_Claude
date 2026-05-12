@@ -912,27 +912,25 @@ if run_btn:
     if strat_key == "ema_cross" and bar_count < 300:
         st.warning("⚠ The 50/200 EMA strategy needs ~300+ bars. Consider extending the history window.")
 
-    with st.swith st.spinner("Running backtest..."):
+    with st.spinner("Running backtest…"):
         fn_map = {
             "rsi_bb":    strategy_rsi_bollinger,
             "macd":      strategy_macd,
             "ema_cross": strategy_ema_cross,
             "custom":    strategy_custom,
         }
-        # 1. Generate strategy signals
         df_signals = fn_map[strat_key](df_raw.copy(), params)
 
-        # 2. RUN XGBOOST PREDICTIONS
-        # We perform this inside the spinner so it's all part of the "Running" state
+        # 2. RUN XGBOOST PREDICTIONS HERE
+        # This ensures df_signals contains 'xgb_pred' and 'xgb_conf' regardless of strategy
         preds, confs = get_xgb_predictions(df_signals)
-        
         # Initialize accuracy to 0.0 in case prediction fails
         xgb_accuracy = 0.0
 
         if preds is not None:
             df_signals['xgb_pred'] = preds
             df_signals['xgb_conf'] = confs
-            
+
             # Calculate actual direction for accuracy comparison
             # Using log returns matching the training SIDEWAYS_THRESH
             next_ret = np.log(df_signals["Close"].shift(-1) / df_signals["Close"])
@@ -953,14 +951,43 @@ if run_btn:
 
         # 3. Run the backtest engine
         result = run_backtest(df_signals, initial_capital, position_size, commission)
-        
+
         # Store accuracy in the result stats dictionary for the UI
         if result:
             result['stats']['XGB Accuracy (%)'] = xgb_accuracy
+            
+        # --- INSERT THE SNIPPET HERE ---
+        df_with_preds = df_signals.copy()
+    
+    if preds:
+        df_with_preds['xgb_pred'] = preds
+        # Re-assign df_signals so the chart functions see the 'xgb_pred' column
+        df_signals = df_with_preds 
+        
+        # Calculate actual direction for accuracy comparison
+        next_ret = np.log(df_with_preds["Close"].shift(-1) / df_with_preds["Close"])
+        actual = []
+        for r in next_ret:
+            if pd.isna(r): actual.append("N/A")
+            elif r > 0.003: actual.append("BULLISH")
+            elif r < -0.003: actual.append("BEARISH")
+            else: actual.append("SIDEWAYS")
+        
+        df_with_preds['actual_dir'] = actual
+        
+        # Calculate accuracy only for valid 'actual' entries
+        valid_mask = df_with_preds['actual_dir'] != "N/A"
+        correct = (df_with_preds.loc[valid_mask, 'xgb_pred'] == df_with_preds.loc[valid_mask, 'actual_dir']).sum()
+        accuracy = (correct / valid_mask.sum()) * 100
+        
+        result['stats']['XGB Accuracy (%)'] = round(accuracy, 2)
+    else:
+        result['stats']['XGB Accuracy (%)'] = 0.0
 
-        elif not result:
-            st.error("Backtest produced no results. Check data length and parameters.")
-            st.stop()
+
+    if not result:
+        st.error("Backtest produced no results. Check data length and parameters.")
+        st.stop()
 
     stats = result["stats"]
 
