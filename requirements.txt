@@ -4,3 +4,5 @@ numpy>=1.25.0
 yfinance>=0.2.40
 plotly>=5.18.0
 requests>=2.31.0
+xgboost  >=3.2.0
+joblib  >=1.5.3
