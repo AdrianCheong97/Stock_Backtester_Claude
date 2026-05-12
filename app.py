@@ -920,11 +920,18 @@ if run_btn:
             "custom":    strategy_custom,
         }
         df_signals = fn_map[strat_key](df_raw.copy(), params)
+
+        # 2. RUN XGBOOST PREDICTIONS HERE
+        # This ensures df_signals contains 'xgb_pred' and 'xgb_conf' regardless of strategy
+        preds, confs = get_xgb_predictions(df_signals)
+        if preds is not None:
+            df_signals['xgb_pred'] = preds
+            df_signals['xgb_conf'] = confs
+
         result     = run_backtest(df_signals, initial_capital, position_size, commission)
 
-    # --- INSERT THE SNIPPET HERE ---
-    df_with_preds = df_signals.copy()
-    preds, probs = get_xgb_predictions(df_with_preds)
+        # --- INSERT THE SNIPPET HERE ---
+        df_with_preds = df_signals.copy()
     
     if preds:
         df_with_preds['xgb_pred'] = preds
