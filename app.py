@@ -688,30 +688,28 @@ def build_xgboost_features(d: pd.DataFrame):
     return df
 
 def get_xgb_predictions(df: pd.DataFrame):
-    """Loads model and returns predicted classes."""
     try:
-        # 1. Load Model and Artifacts
-        model = xgb.XGBClassifier()
+        # 1. Use the Classifier class instead of Booster
+        model = xgb.XGBClassifier() 
         model.load_model("xgb_stock_model.json")
+        
         artifacts = joblib.load("model_artifacts.joblib")
-        scaler = artifacts["scaler"]
-        top_feats = artifacts["top_feats"]
+        selected_features = artifacts['top_feats'] # Using the correct key from your script
         
-        # Prepare features
+        # 2. Prepare features
         feat_df = build_xgboost_features(df)
-        X = feat_df[artifacts['top_feats']]
+        X = feat_df[selected_features]
         
-        # Scale
+        # 3. Scale the data
         X_scaled = artifacts['scaler'].transform(X)
-        dmatrix = xgb.DMatrix(X_scaled)
         
-        # Predict
-        probs = model.predict(dmatrix)
+        # 4. Predict using the NumPy array directly (No DMatrix needed for Classifier)
+        probs = model.predict_proba(X_scaled)
         preds = np.argmax(probs, axis=1)
         
-        # Map back to training labels: 0=Bearish, 1=Sideways, 2=Bullish
         label_names = ["BEARISH", "SIDEWAYS", "BULLISH"]
         return [label_names[p] for p in preds], probs
+        
     except Exception as e:
         st.sidebar.error(f"Model Error: {e}")
         return None, None
