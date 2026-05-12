@@ -728,7 +728,9 @@ def plot_backtest(df: pd.DataFrame, trades: pd.DataFrame, ticker: str):
         pred = df['xgb_pred'].iloc[i] if 'xgb_pred' in df.columns else "N/A"
         txt = (f"Date: {df.index[i].date()}<br>"
                f"Close: {df['Close'].iloc[i]:.2f}<br>"
-               f"<b>XGB Prediction: {pred}</b>")
+               f"<span style='color:#58a6ff;'><b>AI Prediction: {pred}</b></span><br>"
+        f"<span style='color:#58a6ff;'><b>Confidence: {conf*100:.1f}%</b></span>"
+    )
         hover_text.append(txt)
 
     # Candlestick
