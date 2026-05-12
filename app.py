@@ -703,12 +703,17 @@ def get_xgb_predictions(df: pd.DataFrame):
         # 3. Scale the data
         X_scaled = artifacts['scaler'].transform(X)
         
-        # 4. Predict using the NumPy array directly (No DMatrix needed for Classifier)
-        probs = model.predict_proba(X_scaled)
+        # Get probabilities for all classes
+        probs = model.predict_proba(X_scaled) 
         preds = np.argmax(probs, axis=1)
         
+        # Extract max probability as confidence
+        confs = np.max(probs, axis=1)
+        
         label_names = ["BEARISH", "SIDEWAYS", "BULLISH"]
-        return [label_names[p] for p in preds], probs
+        labels = [label_names[p] for p in preds]
+        
+        return labels, confs # MUST return two items
         
     except Exception as e:
         st.sidebar.error(f"Model Error: {e}")
