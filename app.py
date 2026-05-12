@@ -952,7 +952,7 @@ if run_btn:
 
     # ── KPI Row 1 ───────────────────────────────────────────────────────────
     st.markdown("### Performance Summary")
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1, k2, k3, k4, k5, k6, k7 = st.columns(7) # Increase to 7 columns
     k1.metric("Total Return",   f"{stats['Total Return (%)']:+.2f}%",
               delta=f"vs B&H {stats['Buy & Hold (%)']:+.2f}%")
     k2.metric("Final Equity",   f"${stats['Final Equity ($)']:,.0f}")
