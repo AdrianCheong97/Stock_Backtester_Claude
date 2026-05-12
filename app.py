@@ -19,7 +19,9 @@ from plotly.subplots import make_subplots
 import requests
 from datetime import datetime, timedelta
 import warnings
-
+import xgboost as xgb
+import joblib
+from scipy import stats
 warnings.filterwarnings("ignore")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -612,6 +614,125 @@ def chart_monthly(equity_df: pd.DataFrame) -> go.Figure:
                       height=300, margin=dict(l=10, r=10, t=10, b=60))
     return fig
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  MODEL LOADING & FEATURE ENGINEERING (REPLICATED FROM TRAINING)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_xgboost_features(df: pd.DataFrame):
+    """Replicates the training pipeline feature engineering."""
+    d = df.copy()
+    
+    # 1. Indicators
+    for p in [10, 20, 50, 200]:
+        d[f"EMA_{p}"] = d["Close"].ewm(span=p, adjust=False).mean()
+    
+    # ATR
+    prev_close = d["Close"].shift(1)
+    tr = pd.concat([d["High"] - d["Low"], (d["High"] - prev_close).abs(), (d["Low"] - prev_close).abs()], axis=1).max(axis=1)
+    d["ATR"] = tr.ewm(span=14, adjust=False).mean()
+    
+    # Donchian
+    d["DC_upper"] = d["High"].rolling(20).max()
+    d["DC_lower"] = d["Low"].rolling(20).min()
+    d["DC_mid"] = (d["DC_upper"] + d["DC_lower"]) / 2
+    d["DC_width"] = d["DC_upper"] - d["DC_lower"]
+    
+    # Sharpe
+    ret = d["Close"].pct_change()
+    d["Sharpe"] = (ret.rolling(20).mean() / ret.rolling(20).std().replace(0, np.nan)) * np.sqrt(252)
+    
+    # OHLC Deltas
+    d["HL_range"] = d["High"] - d["Low"]
+    d["OC_delta"] = d["Close"] - d["Open"]
+    d["OC_pct"] = d["OC_delta"] / d["Open"]
+    d["HO_gap"] = d["High"] - d["Open"]
+    d["OL_gap"] = d["Open"] - d["Low"]
+    d["HLC_avg"] = (d["High"] + d["Low"] + d["Close"]) / 3
+    d["gap_open"] = d["Open"] - d["Close"].shift(1)
+    d["gap_open_pct"] = d["gap_open"] / d["Close"].shift(1)
+    
+    # Log returns
+    d["log_ret"] = np.log(d["Close"] / d["Close"].shift(1))
+    d["log_ret_2"] = np.log(d["Close"] / d["Close"].shift(2))
+    d["log_ret_5"] = np.log(d["Close"] / d["Close"].shift(5))
+    d["log_ret_10"] = np.log(d["Close"] / d["Close"].shift(10))
+    d["realised_vol"] = d["log_ret"].rolling(20).std() * np.sqrt(252)
+    
+    # Volume
+    d["vol_ma20"] = d["Volume"].rolling(20).mean()
+    d["vol_ratio"] = d["Volume"] / d["vol_ma20"].replace(0, np.nan)
+    d["vol_log"] = np.log1p(d["Volume"])
+    
+    # EMA relationships
+    d["above_EMA10"] = (d["Close"] > d["EMA_10"]).astype(int)
+    d["above_EMA20"] = (d["Close"] > d["EMA_20"]).astype(int)
+    d["above_EMA50"] = (d["Close"] > d["EMA_50"]).astype(int)
+    d["above_EMA200"] = (d["Close"] > d["EMA_200"]).astype(int)
+    
+    for p in [10, 20, 50, 200]:
+        d[f"dist_EMA{p}"] = (d["Close"] - d[f"EMA_{p}"]) / d["ATR"].replace(0, np.nan)
+    
+    d["EMA10_slope"] = d["EMA_10"].diff(3) / d["EMA_10"].shift(3)
+    d["EMA10_x_EMA20"] = (d["EMA_10"] > d["EMA_20"]).astype(int)
+    d["EMA20_x_EMA50"] = (d["EMA_20"] > d["EMA_50"]).astype(int)
+    d["DC_pos"] = (d["Close"] - d["DC_lower"]) / d["DC_width"].replace(0, np.nan)
+    
+    # Note: Beta/Alpha requires SPY data which is excluded here for simplicity
+    # but should be added if the model relies heavily on them.
+    
+    return d
+
+def get_xgb_predictions(df: pd.DataFrame):
+    """Loads model and returns predicted classes."""
+    try:
+        model = xgb.Booster()
+        model.load_model("xgb_stock_model.json")
+        artifacts = joblib.load("model_artifacts.joblib")
+        
+        # Prepare features
+        feat_df = build_xgboost_features(df)
+        X = feat_df[artifacts['feature_cols']]
+        
+        # Scale
+        X_scaled = artifacts['scaler'].transform(X)
+        dmatrix = xgb.DMatrix(X_scaled)
+        
+        # Predict
+        probs = model.predict(dmatrix)
+        preds = np.argmax(probs, axis=1)
+        
+        # Map back to training labels: 0=Bearish, 1=Sideways, 2=Bullish
+        label_names = ["BEARISH", "SIDEWAYS", "BULLISH"]
+        return [label_names[p] for p in preds], probs
+    except Exception as e:
+        st.sidebar.error(f"Model Error: {e}")
+        return None, None
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  UPDATED PLOT FUNCTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_backtest(df: pd.DataFrame, trades: pd.DataFrame, ticker: str):
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                       vertical_spacing=0.03, row_heights=[0.7, 0.3])
+
+    # Add custom hover text with XGBoost predictions
+    hover_text = []
+    for i in range(len(df)):
+        pred = df['xgb_pred'].iloc[i] if 'xgb_pred' in df.columns else "N/A"
+        txt = (f"Date: {df.index[i].date()}<br>"
+               f"Close: {df['Close'].iloc[i]:.2f}<br>"
+               f"<b>XGB Prediction: {pred}</b>")
+        hover_text.append(txt)
+
+    # Candlestick
+    fig.add_trace(go.Candlestick(
+        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+        name=ticker, hovertext=hover_text, hoverinfo="text"
+    ), row=1, col=1)
+
+    # ... (Rest of existing plotting logic for Buy/Sell arrows)
+    st.plotly_chart(fig, use_container_width=True)   
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  SIDEBAR
@@ -793,6 +914,36 @@ if run_btn:
         df_signals = fn_map[strat_key](df_raw.copy(), params)
         result     = run_backtest(df_signals, initial_capital, position_size, commission)
 
+    # --- INSERT THE SNIPPET HERE ---
+    df_with_preds = df_signals.copy()
+    preds, probs = get_xgb_predictions(df_with_preds)
+    
+    if preds:
+        df_with_preds['xgb_pred'] = preds
+        # Re-assign df_signals so the chart functions see the 'xgb_pred' column
+        df_signals = df_with_preds 
+        
+        # Calculate actual direction for accuracy comparison
+        next_ret = np.log(df_with_preds["Close"].shift(-1) / df_with_preds["Close"])
+        actual = []
+        for r in next_ret:
+            if pd.isna(r): actual.append("N/A")
+            elif r > 0.003: actual.append("BULLISH")
+            elif r < -0.003: actual.append("BEARISH")
+            else: actual.append("SIDEWAYS")
+        
+        df_with_preds['actual_dir'] = actual
+        
+        # Calculate accuracy only for valid 'actual' entries
+        valid_mask = df_with_preds['actual_dir'] != "N/A"
+        correct = (df_with_preds.loc[valid_mask, 'xgb_pred'] == df_with_preds.loc[valid_mask, 'actual_dir']).sum()
+        accuracy = (correct / valid_mask.sum()) * 100
+        
+        result['stats']['XGB Accuracy (%)'] = round(accuracy, 2)
+    else:
+        result['stats']['XGB Accuracy (%)'] = 0.0
+
+
     if not result:
         st.error("Backtest produced no results. Check data length and parameters.")
         st.stop()
@@ -809,6 +960,8 @@ if run_btn:
     k4.metric("Win Rate",       f"{stats['Win Rate (%)']:.1f}%")
     k5.metric("Sharpe Ratio",   f"{stats['Sharpe Ratio']:.2f}")
     k6.metric("Max Drawdown",   f"{stats['Max Drawdown (%)']:.2f}%")
+    # NEW METRIC
+    k7.metric("XGB Accuracy", f"{stats.get('XGB Accuracy (%)', 0)}%")
 
     st.markdown("")
 
