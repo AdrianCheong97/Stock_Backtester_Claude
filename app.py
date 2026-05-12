@@ -618,80 +618,87 @@ def chart_monthly(equity_df: pd.DataFrame) -> go.Figure:
 #  MODEL LOADING & FEATURE ENGINEERING (REPLICATED FROM TRAINING)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_xgboost_features(df: pd.DataFrame):
+def build_xgboost_features(d: pd.DataFrame):
     """Replicates the training pipeline feature engineering."""
-    d = df.copy()
+    df = d.copy()
     
-    # 1. Indicators
+    """Mirroring the indicator logic from the training script."""
+    # EMAs
     for p in [10, 20, 50, 200]:
-        d[f"EMA_{p}"] = d["Close"].ewm(span=p, adjust=False).mean()
+        df[f"EMA_{p}"] = df["Close"].ewm(span=p, adjust=False).mean()
     
     # ATR
-    prev_close = d["Close"].shift(1)
-    tr = pd.concat([d["High"] - d["Low"], (d["High"] - prev_close).abs(), (d["Low"] - prev_close).abs()], axis=1).max(axis=1)
-    d["ATR"] = tr.ewm(span=14, adjust=False).mean()
+    prev_close = df["Close"].shift(1)
+    tr = pd.concat([df["High"] - df["Low"], (df["High"] - prev_close).abs(), (df["Low"] - prev_close).abs()], axis=1).max(axis=1)
+    df["ATR"] = tr.ewm(span=14, adjust=False).mean()
     
     # Donchian
-    d["DC_upper"] = d["High"].rolling(20).max()
-    d["DC_lower"] = d["Low"].rolling(20).min()
-    d["DC_mid"] = (d["DC_upper"] + d["DC_lower"]) / 2
-    d["DC_width"] = d["DC_upper"] - d["DC_lower"]
+    df["DC_upper"] = df["High"].rolling(20).max()
+    df["DC_lower"] = df["Low"].rolling(20).min()
+    df["DC_width"] = df["DC_upper"] - df["DC_lower"]
+    df["DC_mid"]   = (df["DC_upper"] + df["DC_lower"]) / 2
     
     # Sharpe
-    ret = d["Close"].pct_change()
-    d["Sharpe"] = (ret.rolling(20).mean() / ret.rolling(20).std().replace(0, np.nan)) * np.sqrt(252)
+    ret = df["Close"].pct_change()
+    df["Sharpe"] = (ret.rolling(20).mean() / ret.rolling(20).std()) * np.sqrt(252)
     
-    # OHLC Deltas
-    d["HL_range"] = d["High"] - d["Low"]
-    d["OC_delta"] = d["Close"] - d["Open"]
-    d["OC_pct"] = d["OC_delta"] / d["Open"]
-    d["HO_gap"] = d["High"] - d["Open"]
-    d["OL_gap"] = d["Open"] - d["Low"]
-    d["HLC_avg"] = (d["High"] + d["Low"] + d["Close"]) / 3
-    d["gap_open"] = d["Open"] - d["Close"].shift(1)
-    d["gap_open_pct"] = d["gap_open"] / d["Close"].shift(1)
+    # Alpha/Beta (vs SPY)
+    spy = yf.download("SPY", start=df.index[0], end=df.index[-1], auto_adjust=True, progress=False)
+    if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
     
-    # Log returns
-    d["log_ret"] = np.log(d["Close"] / d["Close"].shift(1))
-    d["log_ret_2"] = np.log(d["Close"] / d["Close"].shift(2))
-    d["log_ret_5"] = np.log(d["Close"] / d["Close"].shift(5))
-    d["log_ret_10"] = np.log(d["Close"] / d["Close"].shift(10))
-    d["realised_vol"] = d["log_ret"].rolling(20).std() * np.sqrt(252)
+    spy_ret = spy["Close"].pct_change().rename("spy")
+    stk_ret = df["Close"].pct_change().rename("stk")
+    merged = pd.concat([stk_ret, spy_ret], axis=1).dropna()
     
-    # Volume
-    d["vol_ma20"] = d["Volume"].rolling(20).mean()
-    d["vol_ratio"] = d["Volume"] / d["vol_ma20"].replace(0, np.nan)
-    d["vol_log"] = np.log1p(d["Volume"])
+    # Calculate for the most recent window
+    window = merged.tail(60)
+    slope, intercept, *_ = stats.linregress(window["spy"], window["stk"])
+    df["Beta"] = slope
+    df["Alpha"] = intercept * 252
     
-    # EMA relationships
-    d["above_EMA10"] = (d["Close"] > d["EMA_10"]).astype(int)
-    d["above_EMA20"] = (d["Close"] > d["EMA_20"]).astype(int)
-    d["above_EMA50"] = (d["Close"] > d["EMA_50"]).astype(int)
-    d["above_EMA200"] = (d["Close"] > d["EMA_200"]).astype(int)
+    df["HL_range"] = df["High"] - df["Low"]
+    df["OC_delta"] = df["Close"] - df["Open"]
+    df["OC_pct"] = df["OC_delta"] / df["Open"]
+    df["HO_gap"] = df["High"] - df["Open"]
+    df["OL_gap"] = df["Open"] - df["Low"]
+    df["HLC_avg"]     = (df["High"] + df["Low"] + df["Close"]) / 3  # typical price
+    df["gap_open"]    = df["Open"]  - df["Close"].shift(1)   # overnight gap
+    df["gap_open_pct"] = (df["Open"] - df["Close"].shift(1)) / df["Close"].shift(1)
+    
+    df["log_ret"] = np.log(df["Close"] / df["Close"].shift(1))
+    df["log_ret_2"] = np.log(df["Close"] / df["Close"].shift(2))
+    df["log_ret_5"] = np.log(df["Close"] / df["Close"].shift(5))
+    df["log_ret_10"] = np.log(df["Close"] / df["Close"].shift(10))
+    df["realised_vol"] = df["log_ret"].rolling(20).std() * np.sqrt(252)
+    
+    df["vol_ma20"] = df["Volume"].rolling(20).mean()
+    df["vol_ratio"] = df["Volume"] / df["vol_ma20"]
+    df["vol_log"] = np.log1p(df["Volume"])
     
     for p in [10, 20, 50, 200]:
-        d[f"dist_EMA{p}"] = (d["Close"] - d[f"EMA_{p}"]) / d["ATR"].replace(0, np.nan)
-    
-    d["EMA10_slope"] = d["EMA_10"].diff(3) / d["EMA_10"].shift(3)
-    d["EMA10_x_EMA20"] = (d["EMA_10"] > d["EMA_20"]).astype(int)
-    d["EMA20_x_EMA50"] = (d["EMA_20"] > d["EMA_50"]).astype(int)
-    d["DC_pos"] = (d["Close"] - d["DC_lower"]) / d["DC_width"].replace(0, np.nan)
-    
-    # Note: Beta/Alpha requires SPY data which is excluded here for simplicity
-    # but should be added if the model relies heavily on them.
+        df[f"above_EMA{p}"] = (df["Close"] > df[f"EMA_{p}"]).astype(int)
+        df[f"dist_EMA{p}"] = (df["Close"] - df[f"EMA_{p}"]) / df["ATR"]
+        
+    df["EMA10_slope"] = df["EMA_10"].diff(3) / df["EMA_10"].shift(3)
+    df["EMA10_x_EMA20"] = (df["EMA_10"] > df["EMA_20"]).astype(int)
+    df["EMA20_x_EMA50"] = (df["EMA_20"] > df["EMA_50"]).astype(int)
+    df["DC_pos"] = (df["Close"] - df["DC_lower"]) / df["DC_width"]
     
     return d
 
 def get_xgb_predictions(df: pd.DataFrame):
     """Loads model and returns predicted classes."""
     try:
-        model = xgb.Booster()
+        # 1. Load Model and Artifacts
+        model = xgb.XGBClassifier()
         model.load_model("xgb_stock_model.json")
         artifacts = joblib.load("model_artifacts.joblib")
+        scaler = artifacts["scaler"]
+        top_feats = artifacts["top_feats"]
         
         # Prepare features
         feat_df = build_xgboost_features(df)
-        X = feat_df[artifacts['feature_cols']]
+        X = feat_df[artifacts['top_feats']]
         
         # Scale
         X_scaled = artifacts['scaler'].transform(X)
