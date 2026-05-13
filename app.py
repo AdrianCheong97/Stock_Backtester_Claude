@@ -19,10 +19,20 @@ from plotly.subplots import make_subplots
 import requests
 from datetime import datetime, timedelta
 import warnings
-import xgboost as xgb
-import joblib
-from scipy import stats
+import os
+from pathlib import Path
+
 warnings.filterwarnings("ignore")
+
+# ── ML model imports (optional — graceful fallback if files missing) ──
+try:
+    import xgboost as xgb
+    import joblib
+    from scipy import stats as scipy_stats
+    from sklearn.preprocessing import RobustScaler
+    _ML_LIBS_OK = True
+except ImportError:
+    _ML_LIBS_OK = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  PAGE CONFIG
@@ -191,6 +201,216 @@ def donchian(high: pd.Series, low: pd.Series, n: int = 20):
     lower = low.rolling(n).min()
     mid   = (upper + lower) / 2
     return upper, lower, mid
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  XGBoost MODEL — loader + feature builder
+#  Mirrors the exact feature engineering in stock_direction_predictor.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+XGB_MODEL_PATH      = "xgb_stock_model.json"
+XGB_ARTIFACTS_PATH  = "model_artifacts.joblib"
+LABEL_NAMES         = ["BEARISH", "SIDEWAYS", "BULLISH"]
+# colour tokens for each class
+PRED_COLOURS = {
+    "BEARISH":  "#f85149",
+    "SIDEWAYS": "#d29922",
+    "BULLISH":  "#3fb950",
+}
+
+
+@st.cache_resource(show_spinner=False)
+def load_xgb_model():
+    """Load saved XGBoost model + artifacts. Returns (model, artifacts) or (None, None)."""
+    if not _ML_LIBS_OK:
+        return None, None
+    if not (Path(XGB_MODEL_PATH).exists() and Path(XGB_ARTIFACTS_PATH).exists()):
+        return None, None
+    try:
+        model = xgb.XGBClassifier()
+        model.load_model(XGB_MODEL_PATH)
+        artifacts = joblib.load(XGB_ARTIFACTS_PATH)
+        return model, artifacts
+    except Exception as e:
+        st.warning(f"Could not load XGB model: {e}")
+        return None, None
+
+
+def _add_emas(df):
+    for p in [10, 20, 50, 200]:
+        df[f"EMA_{p}"] = df["Close"].ewm(span=p, adjust=False).mean()
+    return df
+
+def _add_atr_ml(df, period=14):
+    prev_close = df["Close"].shift(1)
+    tr = pd.concat([
+        df["High"] - df["Low"],
+        (df["High"] - prev_close).abs(),
+        (df["Low"]  - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    df["ATR"] = tr.ewm(span=period, adjust=False).mean()
+    return df
+
+def _add_donchian_ml(df, period=20):
+    df["DC_upper"] = df["High"].rolling(period).max()
+    df["DC_lower"] = df["Low"].rolling(period).min()
+    df["DC_mid"]   = (df["DC_upper"] + df["DC_lower"]) / 2
+    df["DC_width"] = df["DC_upper"] - df["DC_lower"]
+    return df
+
+def _add_sharpe_ml(df, period=20):
+    ret = df["Close"].pct_change()
+    mu  = ret.rolling(period).mean()
+    sd  = ret.rolling(period).std()
+    df["Sharpe"] = (mu / sd.replace(0, np.nan)) * np.sqrt(252)
+    return df
+
+def _add_alpha_beta_ml(df, spy_close: pd.Series, period=60):
+    """Vectorised rolling OLS beta & alpha vs SPY — no row-by-row loop."""
+    df["Beta"]  = np.nan
+    df["Alpha"] = np.nan
+    stk_ret = df["Close"].pct_change()
+    spy_ret = spy_close.reindex(df.index).pct_change()
+    aligned = pd.concat([stk_ret.rename("stk"), spy_ret.rename("spy")], axis=1).dropna()
+    betas, alphas = [], []
+    for i in range(len(aligned)):
+        if i < period:
+            betas.append(np.nan); alphas.append(np.nan)
+        else:
+            w = aligned.iloc[i - period : i]
+            slope, intercept, *_ = scipy_stats.linregress(w["spy"], w["stk"])
+            betas.append(slope)
+            alphas.append(intercept * 252)
+    beta_s  = pd.Series(betas,  index=aligned.index)
+    alpha_s = pd.Series(alphas, index=aligned.index)
+    df["Beta"]  = beta_s.reindex(df.index)
+    df["Alpha"] = alpha_s.reindex(df.index)
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_spy(years_back: int) -> pd.Series:
+    """Fetch SPY close prices for Beta/Alpha calculation."""
+    try:
+        import yfinance as yf
+        end   = datetime.today()
+        start = end - timedelta(days=years_back * 365 + 90)   # extra buffer
+        spy = yf.download("SPY", start=start.strftime("%Y-%m-%d"),
+                          end=end.strftime("%Y-%m-%d"),
+                          auto_adjust=True, progress=False)
+        if isinstance(spy.columns, pd.MultiIndex):
+            spy.columns = spy.columns.get_level_values(0)
+        return spy["Close"]
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
+    """
+    Reproduce every feature from stock_direction_predictor.engineer_features().
+    Input df must have OHLCV columns. Returns df with all ML feature columns appended.
+    """
+    d = df.copy()
+    d = _add_emas(d)
+    d = _add_atr_ml(d)
+    d = _add_donchian_ml(d)
+    d = _add_sharpe_ml(d)
+    if not spy_close.empty:
+        d = _add_alpha_beta_ml(d, spy_close)
+    else:
+        d["Beta"] = np.nan; d["Alpha"] = np.nan
+
+    # OHLC deltas
+    d["HL_range"]     = d["High"]  - d["Low"]
+    d["OC_delta"]     = d["Close"] - d["Open"]
+    d["OC_pct"]       = d["OC_delta"] / d["Open"]
+    d["HO_gap"]       = d["High"]  - d["Open"]
+    d["OL_gap"]       = d["Open"]  - d["Low"]
+    d["HLC_avg"]      = (d["High"] + d["Low"] + d["Close"]) / 3
+    d["gap_open"]     = d["Open"]  - d["Close"].shift(1)
+    d["gap_open_pct"] = d["gap_open"] / d["Close"].shift(1)
+
+    # Log returns
+    d["log_ret"]      = np.log(d["Close"] / d["Close"].shift(1))
+    d["log_ret_2"]    = np.log(d["Close"] / d["Close"].shift(2))
+    d["log_ret_5"]    = np.log(d["Close"] / d["Close"].shift(5))
+    d["log_ret_10"]   = np.log(d["Close"] / d["Close"].shift(10))
+    d["realised_vol"] = d["log_ret"].rolling(20).std() * np.sqrt(252)
+
+    # Volume features
+    d["vol_ma20"]  = d["Volume"].rolling(20).mean()
+    d["vol_ratio"] = d["Volume"] / d["vol_ma20"].replace(0, np.nan)
+    d["vol_log"]   = np.log1p(d["Volume"])
+
+    # Price vs EMA flags
+    for p in [10, 20, 50, 200]:
+        d[f"above_EMA{p}"] = (d["Close"] > d[f"EMA_{p}"]).astype(int)
+        d[f"dist_EMA{p}"]  = (d["Close"] - d[f"EMA_{p}"]) / d["ATR"].replace(0, np.nan)
+
+    d["EMA10_slope"]   = d["EMA_10"].diff(3) / d["EMA_10"].shift(3)
+    d["EMA10_x_EMA20"] = (d["EMA_10"] > d["EMA_20"]).astype(int)
+    d["EMA20_x_EMA50"] = (d["EMA_20"] > d["EMA_50"]).astype(int)
+
+    # Donchian position
+    d["DC_pos"] = ((d["Close"] - d["DC_lower"]) /
+                   d["DC_width"].replace(0, np.nan))
+    return d
+
+
+# Columns excluded from feature matrix (same EXCLUDE set as training script)
+_EXCLUDE_COLS = {"Open", "High", "Low", "Close", "Volume", "ticker",
+                 "target", "target_enc", "signal"}
+
+def _get_feature_cols(df: pd.DataFrame) -> list:
+    return [c for c in df.columns if c not in _EXCLUDE_COLS]
+
+
+def run_ml_predictions(df_raw: pd.DataFrame,
+                       model,
+                       artifacts: dict,
+                       spy_close: pd.Series) -> pd.DataFrame:
+    """
+    Build features → scale → predict probabilities for every row.
+    Returns a DataFrame indexed like df_raw with columns:
+        pred_label, pred_BEARISH, pred_SIDEWAYS, pred_BULLISH, pred_correct
+    pred_correct compares the predicted direction to the ACTUAL next-day
+    close direction so we know accuracy at backtest time.
+    """
+    feat_df   = build_ml_features(df_raw, spy_close)
+    feat_cols = artifacts.get("feature_cols", _get_feature_cols(feat_df))
+
+    # Only keep columns that actually exist after feature building
+    feat_cols = [c for c in feat_cols if c in feat_df.columns]
+
+    X = feat_df[feat_cols].copy()
+    X = X.replace([np.inf, -np.inf], np.nan)
+
+    scaler = artifacts.get("scaler")
+    if scaler is not None:
+        X_vals = scaler.transform(X.fillna(0))
+    else:
+        X_vals = X.fillna(0).values
+
+    proba  = model.predict_proba(X_vals)          # (n, 3) — BEARISH/SIDEWAYS/BULLISH
+    labels = [LABEL_NAMES[i] for i in proba.argmax(axis=1)]
+
+    out = pd.DataFrame({
+        "pred_label":   labels,
+        "pred_BEARISH":  proba[:, 0],
+        "pred_SIDEWAYS": proba[:, 1],
+        "pred_BULLISH":  proba[:, 2],
+    }, index=feat_df.index)
+
+    # Actual next-day direction (ground truth for accuracy calculation)
+    actual_ret  = np.log(df_raw["Close"] / df_raw["Close"].shift(1)).shift(-1)
+    THRESH      = 0.003
+    actual_dir  = pd.Series("SIDEWAYS", index=df_raw.index)
+    actual_dir[actual_ret >  THRESH] = "BULLISH"
+    actual_dir[actual_ret < -THRESH] = "BEARISH"
+    out["actual_dir"]   = actual_dir
+    out["pred_correct"] = (out["pred_label"] == out["actual_dir"]).astype(int)
+
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -482,11 +702,40 @@ BG    = "#0d0f14"
 GRID  = "#1a1f28"
 MUTED = "#8b949e"
 
-def chart_price(df: pd.DataFrame, result: dict, title: str) -> go.Figure:
+def chart_price(df: pd.DataFrame, result: dict, title: str,
+                ml_preds: pd.DataFrame = None) -> go.Figure:
     trade_df = result.get("trade_log", pd.DataFrame())
 
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                        vertical_spacing=0.03, row_heights=[0.55, 0.2, 0.25])
+    fig = make_subplots(
+        rows=4 if has_ml else 3, cols=1, shared_xaxes=True,
+        vertical_spacing=0.02,
+        row_heights=[0.50, 0.17, 0.18, 0.15] if has_ml else [0.55, 0.2, 0.25],
+    )
+
+    # ── Build per-candle hover text incorporating ML predictions ─────
+    has_ml = ml_preds is not None and not ml_preds.empty
+    custom_hover = []
+    for idx, row in df.iterrows():
+        lines = [
+            f"<b>{idx.strftime('%Y-%m-%d')}</b>",
+            f"O: {row['Open']:.2f}  H: {row['High']:.2f}  "
+            f"L: {row['Low']:.2f}  C: {row['Close']:.2f}",
+        ]
+        if has_ml and idx in ml_preds.index:
+            mp = ml_preds.loc[idx]
+            label   = mp["pred_label"]
+            colour  = PRED_COLOURS.get(label, "#8b949e")
+            correct = "✓" if mp["pred_correct"] == 1 else "✗"
+            lines += [
+                "─────────────────",
+                f"<b>ML Prediction: "
+                f"<span style='color:{colour}'>{label}</span></b>  {correct}",
+                f"  🔴 BEARISH  {mp['pred_BEARISH']*100:5.1f}%",
+                f"  🟡 SIDEWAYS {mp['pred_SIDEWAYS']*100:5.1f}%",
+                f"  🟢 BULLISH  {mp['pred_BULLISH']*100:5.1f}%",
+                f"  Actual next-day: {mp['actual_dir']}",
+            ]
+        custom_hover.append("<br>".join(lines))
 
     # Candlestick
     fig.add_trace(go.Candlestick(
@@ -494,7 +743,38 @@ def chart_price(df: pd.DataFrame, result: dict, title: str) -> go.Figure:
         increasing_line_color="#3fb950", decreasing_line_color="#f85149",
         increasing_fillcolor="#1a3a1a",  decreasing_fillcolor="#3a1a1a",
         name="Price", line_width=1,
+        text=custom_hover,
+        hoverinfo="text",
     ), row=1, col=1)
+
+    # ── ML confidence band overlay (faint background tint per candle) ─
+    if has_ml:
+        # Scatter invisible markers that carry the prediction colour as a
+        # faint rectangle — achieved via shape-less markers at candle midpoint
+        mid_price = (df["High"] + df["Low"]) / 2
+        ml_colours_rgba = []
+        for idx in df.index:
+            if idx in ml_preds.index:
+                lbl = ml_preds.loc[idx, "pred_label"]
+                if lbl == "BULLISH":
+                    ml_colours_rgba.append("rgba(63,185,80,0.13)")
+                elif lbl == "BEARISH":
+                    ml_colours_rgba.append("rgba(248,81,73,0.13)")
+                else:
+                    ml_colours_rgba.append("rgba(210,153,34,0.10)")
+            else:
+                ml_colours_rgba.append("rgba(0,0,0,0)")
+
+        fig.add_trace(go.Bar(
+            x=df.index,
+            y=df["High"] - df["Low"],
+            base=df["Low"],
+            marker_color=ml_colours_rgba,
+            marker_line_width=0,
+            name="ML Prediction",
+            showlegend=True,
+            hoverinfo="skip",
+        ), row=1, col=1)
 
     # Indicator overlays
     overlay_cfg = {
@@ -561,6 +841,37 @@ def chart_price(df: pd.DataFrame, result: dict, title: str) -> go.Figure:
         fig.add_trace(go.Scatter(x=df.index, y=df["ATR14"],
                                  line=dict(color="#d2a8ff", width=1.2), name="ATR"), row=3, col=1)
 
+    # ── Row 4: ML confidence stacked bar (Bearish / Sideways / Bullish) ──
+    if has_ml:
+        aligned_preds = ml_preds.reindex(df.index)
+        fig.add_trace(go.Bar(
+            x=df.index,
+            y=aligned_preds["pred_BEARISH"],
+            name="P(Bearish)",
+            marker_color="#f85149",
+            opacity=0.85,
+        ), row=4, col=1)
+        fig.add_trace(go.Bar(
+            x=df.index,
+            y=aligned_preds["pred_SIDEWAYS"],
+            name="P(Sideways)",
+            marker_color="#d29922",
+            opacity=0.85,
+        ), row=4, col=1)
+        fig.add_trace(go.Bar(
+            x=df.index,
+            y=aligned_preds["pred_BULLISH"],
+            name="P(Bullish)",
+            marker_color="#3fb950",
+            opacity=0.85,
+        ), row=4, col=1)
+        fig.update_layout(barmode="stack")
+        fig.add_hline(y=0.5, line_dash="dot", line_color="#484f58",
+                      opacity=0.6, row=4, col=1)
+        fig.update_yaxes(title_text="P(class)", title_font=dict(size=9, color=MUTED),
+                         range=[0, 1], row=4, col=1)
+
+    n_rows = 4 if has_ml else 3
     fig.update_layout(
         title=dict(text=f"<b>{title}</b>",
                    font=dict(family="IBM Plex Mono", size=13, color="#58a6ff")),
@@ -568,15 +879,11 @@ def chart_price(df: pd.DataFrame, result: dict, title: str) -> go.Figure:
         legend=dict(bgcolor=BG, font=dict(color=MUTED, size=10),
                     orientation="h", y=1.02),
         xaxis_rangeslider_visible=False,
-        dragmode="pan",                      # pan as default tool
-        height=700, margin=dict(l=10, r=10, t=50, b=10),
+        dragmode="pan",
+        height=820 if has_ml else 700,
+        margin=dict(l=10, r=10, t=50, b=10),
     )
-    # Enable scroll-wheel zoom anchored to mouse cursor position on every axis
-    scroll_zoom_cfg = dict(
-        gridcolor=GRID, zerolinecolor=GRID,
-        tickfont=dict(color=MUTED, size=9),
-    )
-    for r in range(1, 4):
+    for r in range(1, n_rows + 1):
         fig.update_xaxes(row=r, col=1, gridcolor=GRID, zerolinecolor=GRID,
                          tickfont=dict(color=MUTED, size=9))
         fig.update_yaxes(row=r, col=1, gridcolor=GRID, zerolinecolor=GRID,
@@ -614,146 +921,6 @@ def chart_monthly(equity_df: pd.DataFrame) -> go.Figure:
                       height=300, margin=dict(l=10, r=10, t=10, b=60))
     return fig
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  MODEL LOADING & FEATURE ENGINEERING (REPLICATED FROM TRAINING)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_xgboost_features(d: pd.DataFrame):
-    """Replicates the training pipeline feature engineering."""
-    df = d.copy()
-    
-    """Mirroring the indicator logic from the training script."""
-    # EMAs
-    for p in [10, 20, 50, 200]:
-        df[f"EMA_{p}"] = df["Close"].ewm(span=p, adjust=False).mean()
-    
-    # ATR
-    prev_close = df["Close"].shift(1)
-    tr = pd.concat([df["High"] - df["Low"], (df["High"] - prev_close).abs(), (df["Low"] - prev_close).abs()], axis=1).max(axis=1)
-    df["ATR"] = tr.ewm(span=14, adjust=False).mean()
-    
-    # Donchian
-    df["DC_upper"] = df["High"].rolling(20).max()
-    df["DC_lower"] = df["Low"].rolling(20).min()
-    df["DC_width"] = df["DC_upper"] - df["DC_lower"]
-    df["DC_mid"]   = (df["DC_upper"] + df["DC_lower"]) / 2
-    
-    # Sharpe
-    ret = df["Close"].pct_change()
-    df["Sharpe"] = (ret.rolling(20).mean() / ret.rolling(20).std()) * np.sqrt(252)
-    
-    # Alpha/Beta (vs SPY)
-    import yfinance as yf
-    spy = yf.download("SPY", start=df.index[0], end=df.index[-1], auto_adjust=True, progress=False)
-    if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
-    
-    spy_ret = spy["Close"].pct_change().rename("spy")
-    stk_ret = df["Close"].pct_change().rename("stk")
-    merged = pd.concat([stk_ret, spy_ret], axis=1).dropna()
-    
-    # Calculate for the most recent window
-    window = merged.tail(60)
-    slope, intercept, *_ = stats.linregress(window["spy"], window["stk"])
-    df["Beta"] = slope
-    df["Alpha"] = intercept * 252
-    
-    df["HL_range"] = df["High"] - df["Low"]
-    df["OC_delta"] = df["Close"] - df["Open"]
-    df["OC_pct"] = df["OC_delta"] / df["Open"]
-    df["HO_gap"] = df["High"] - df["Open"]
-    df["OL_gap"] = df["Open"] - df["Low"]
-    df["HLC_avg"]     = (df["High"] + df["Low"] + df["Close"]) / 3  # typical price
-    df["gap_open"]    = df["Open"]  - df["Close"].shift(1)   # overnight gap
-    df["gap_open_pct"] = (df["Open"] - df["Close"].shift(1)) / df["Close"].shift(1)
-    
-    df["log_ret"] = np.log(df["Close"] / df["Close"].shift(1))
-    df["log_ret_2"] = np.log(df["Close"] / df["Close"].shift(2))
-    df["log_ret_5"] = np.log(df["Close"] / df["Close"].shift(5))
-    df["log_ret_10"] = np.log(df["Close"] / df["Close"].shift(10))
-    df["realised_vol"] = df["log_ret"].rolling(20).std() * np.sqrt(252)
-    
-    df["vol_ma20"] = df["Volume"].rolling(20).mean()
-    df["vol_ratio"] = df["Volume"] / df["vol_ma20"]
-    df["vol_log"] = np.log1p(df["Volume"])
-    
-    for p in [10, 20, 50, 200]:
-        df[f"above_EMA{p}"] = (df["Close"] > df[f"EMA_{p}"]).astype(int)
-        df[f"dist_EMA{p}"] = (df["Close"] - df[f"EMA_{p}"]) / df["ATR"]
-        
-    df["EMA10_slope"] = df["EMA_10"].diff(3) / df["EMA_10"].shift(3)
-    df["EMA10_x_EMA20"] = (df["EMA_10"] > df["EMA_20"]).astype(int)
-    df["EMA20_x_EMA50"] = (df["EMA_20"] > df["EMA_50"]).astype(int)
-    df["DC_pos"] = (df["Close"] - df["DC_lower"]) / df["DC_width"]
-    
-    return df
-
-def get_xgb_predictions(df: pd.DataFrame):
-    try:
-        # 1. Use the Classifier class instead of Booster
-        model = xgb.XGBClassifier() 
-        model.load_model("xgb_stock_model.json")
-        
-        artifacts = joblib.load("model_artifacts.joblib")
-        selected_features = artifacts['top_feats'] # Using the correct key from your script
-        
-        # 2. Prepare features
-        feat_df = build_xgboost_features(df)
-        X = feat_df[selected_features]
-        
-        # 3. Scale the data
-        X_scaled = artifacts['scaler'].transform(X)
-        
-        # Get probabilities for all classes
-        probs = model.predict_proba(X_scaled) 
-        preds = np.argmax(probs, axis=1)
-        
-        # Extract max probability as confidence
-        confs = np.max(probs, axis=1)
-        
-        label_names = ["BEARISH", "SIDEWAYS", "BULLISH"]
-        labels = [label_names[p] for p in preds]
-        
-        return labels, confs # MUST return two items
-        
-    except Exception as e:
-        st.sidebar.error(f"Model Error: {e}")
-        return None, None
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  UPDATED PLOT FUNCTION
-# ─────────────────────────────────────────────────────────────────────────────
-
-def plot_backtest(df: pd.DataFrame, trades: pd.DataFrame, ticker: str):
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                       vertical_spacing=0.03, row_heights=[0.7, 0.3])
-
-    # Create the custom labels for the popup box
-    hover_labels = []
-    for i in range(len(df)):
-        # Get values or set defaults if the model didn't run for a specific row
-        p_val = df['xgb_pred'].iloc[i] if 'xgb_pred' in df.columns else "N/A"
-        c_val = df['xgb_conf'].iloc[i] if 'xgb_conf' in df.columns else 0.0
-        
-        # Build a string with HTML-like formatting for Plotly
-        label = (
-            f"Date: {df.index[i].date()}<br>"
-            f"Close: {df['Close'].iloc[i]:.2f}<br>"
-            f"<span style='color:#58a6ff;'><b>AI Pred: {p_val}</b></span><br>"
-            f"<span style='color:#58a6ff;'><b>Confidence: {c_val*100:.1f}%</b></span>"
-        )
-        hover_labels.append(label)
-
-    # UPDATED TRACE:
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-        name="Price",
-        hovertext=hover_labels, # Add your list here
-        hoverinfo="text"       # THIS IS THE KEY: tells Plotly to show ONLY your text
-    ), row=1, col=1)
-
-    # ... (Rest of existing plotting logic for Buy/Sell arrows)
-    st.plotly_chart(fig, use_container_width=True)   
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  SIDEBAR
@@ -836,6 +1003,15 @@ with st.sidebar:
 
     st.markdown("---")
     run_btn = st.button("▶  RUN BACKTEST", use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("**🤖 ML Model**")
+    use_ml = st.toggle("Enable XGBoost Predictions", value=True,
+                       help="Loads xgb_stock_model.json + model_artifacts.joblib "
+                            "from the working directory")
+    if use_ml:
+        st.caption(f"Model: `{XGB_MODEL_PATH}`")
+        st.caption(f"Artifacts: `{XGB_ARTIFACTS_PATH}`")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -921,56 +1097,18 @@ if run_btn:
         f"({df_raw.index[0].date()} → {df_raw.index[-1].date()})"
     )
 
-    # Warn if data may be too short for strategy
     if strat_key == "ema_cross" and bar_count < 300:
         st.warning("⚠ The 50/200 EMA strategy needs ~300+ bars. Consider extending the history window.")
 
-    with st.spinner("Running backtest..."):
+    with st.spinner("Running backtest…"):
         fn_map = {
             "rsi_bb":    strategy_rsi_bollinger,
             "macd":      strategy_macd,
             "ema_cross": strategy_ema_cross,
             "custom":    strategy_custom,
         }
-        # 1. Generate strategy signals
         df_signals = fn_map[strat_key](df_raw.copy(), params)
-
-        # 2. RUN XGBOOST PREDICTIONS
-        # We perform this inside the spinner so it's all part of the "Running" state
-        preds, confs = get_xgb_predictions(df_signals)
-        
-        # Initialize accuracy to 0.0 in case prediction fails
-        xgb_accuracy = 0.0
-
-        if preds is not None:
-            df_signals['xgb_pred'] = preds
-            df_signals['xgb_conf'] = confs
-            
-            # Calculate actual direction for accuracy comparison
-            # Using log returns matching the training SIDEWAYS_THRESH
-            next_ret = np.log(df_signals["Close"].shift(-1) / df_signals["Close"])
-            actual = []
-            for r in next_ret:
-                if pd.isna(r): actual.append("N/A")
-                elif r > 0.003: actual.append("BULLISH")
-                elif r < -0.003: actual.append("BEARISH")
-                else: actual.append("SIDEWAYS")
-            
-            df_signals['actual_dir'] = actual
-            
-            # Calculate accuracy %
-            valid_mask = df_signals['actual_dir'] != "N/A"
-            if valid_mask.any():
-                correct = (df_signals.loc[valid_mask, 'xgb_pred'] == df_signals.loc[valid_mask, 'actual_dir']).sum()
-                xgb_accuracy = round((correct / valid_mask.sum()) * 100, 2)
-
-        # 3. Run the backtest engine
-        result = run_backtest(df_signals, initial_capital, position_size, commission)
-        
-        # Store accuracy in the result stats dictionary for the UI
-        if result:
-            result['stats']['XGB Accuracy (%)'] = xgb_accuracy
-
+        result     = run_backtest(df_signals, initial_capital, position_size, commission)
 
     if not result:
         st.error("Backtest produced no results. Check data length and parameters.")
@@ -978,10 +1116,45 @@ if run_btn:
 
     stats = result["stats"]
 
+    # ── ML Predictions ───────────────────────────────────────────────────────
+    ml_preds    = pd.DataFrame()
+    ml_loaded   = False
+    ml_acc_all  = None    # overall accuracy across all candles
+    ml_acc_bull = None    # accuracy on BULLISH predictions only
+    ml_acc_bear = None    # accuracy on BEARISH predictions only
+
+    if use_ml:
+        xgb_model, artifacts = load_xgb_model()
+        if xgb_model is not None:
+            with st.spinner("Running ML predictions…"):
+                spy_close = _fetch_spy(years_back + 1)
+                ml_preds  = run_ml_predictions(df_raw, xgb_model, artifacts, spy_close)
+            ml_loaded = True
+
+            # ── Accuracy statistics ──────────────────────────────────────
+            valid = ml_preds.dropna(subset=["actual_dir", "pred_label"])
+            # Exclude last row — actual_dir requires a future candle
+            valid = valid.iloc[:-1]
+            total_candles = len(valid)
+            if total_candles > 0:
+                ml_acc_all  = valid["pred_correct"].mean() * 100
+                bull_mask   = valid["pred_label"] == "BULLISH"
+                bear_mask   = valid["pred_label"] == "BEARISH"
+                side_mask   = valid["pred_label"] == "SIDEWAYS"
+                ml_acc_bull = valid.loc[bull_mask, "pred_correct"].mean() * 100 if bull_mask.any() else 0.0
+                ml_acc_bear = valid.loc[bear_mask, "pred_correct"].mean() * 100 if bear_mask.any() else 0.0
+                ml_acc_side = valid.loc[side_mask, "pred_correct"].mean() * 100 if side_mask.any() else 0.0
+                n_bull = bull_mask.sum(); n_bear = bear_mask.sum(); n_side = side_mask.sum()
+        else:
+            if use_ml:
+                st.warning(
+                    f"⚠ XGBoost model files not found in working directory.  "
+                    f"Expected: `{XGB_MODEL_PATH}` and `{XGB_ARTIFACTS_PATH}`"
+                )
 
     # ── KPI Row 1 ───────────────────────────────────────────────────────────
     st.markdown("### Performance Summary")
-    k1, k2, k3, k4, k5, k6, k7 = st.columns(7) # Increase to 7 columns
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Total Return",   f"{stats['Total Return (%)']:+.2f}%",
               delta=f"vs B&H {stats['Buy & Hold (%)']:+.2f}%")
     k2.metric("Final Equity",   f"${stats['Final Equity ($)']:,.0f}")
@@ -989,8 +1162,6 @@ if run_btn:
     k4.metric("Win Rate",       f"{stats['Win Rate (%)']:.1f}%")
     k5.metric("Sharpe Ratio",   f"{stats['Sharpe Ratio']:.2f}")
     k6.metric("Max Drawdown",   f"{stats['Max Drawdown (%)']:.2f}%")
-    # NEW METRIC
-    k7.metric("XGB Accuracy", f"{stats.get('XGB Accuracy (%)', 0)}%")
 
     st.markdown("")
 
@@ -1000,6 +1171,45 @@ if run_btn:
     kb.metric("Avg Win",        f"{stats['Avg Win (%)']:.2f}%")
     kc.metric("Avg Loss",       f"{stats['Avg Loss (%)']:.2f}%")
     kd.metric("Buy & Hold",     f"{stats['Buy & Hold (%)']:+.2f}%")
+
+    # ── KPI Row 3: ML Accuracy ───────────────────────────────────────────────
+    if ml_loaded and ml_acc_all is not None:
+        st.markdown("")
+        st.markdown("#### 🤖 ML Prediction Accuracy  *(XGBoost — next-session direction)*")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(
+            "Overall Accuracy",
+            f"{ml_acc_all:.1f}%",
+            delta=f"{total_candles:,} candles assessed",
+            help="% of candles where predicted direction matched actual next-day direction"
+        )
+        m2.metric(
+            f"Bullish Calls  ({n_bull})",
+            f"{ml_acc_bull:.1f}%",
+            help="Accuracy when model predicted BULLISH"
+        )
+        m3.metric(
+            f"Bearish Calls  ({n_bear})",
+            f"{ml_acc_bear:.1f}%",
+            help="Accuracy when model predicted BEARISH"
+        )
+        m4.metric(
+            f"Sideways Calls ({n_side})",
+            f"{ml_acc_side:.1f}%",
+            help="Accuracy when model predicted SIDEWAYS"
+        )
+
+        # Per-class breakdown bar
+        class_acc_df = pd.DataFrame({
+            "Class": ["BULLISH", "SIDEWAYS", "BEARISH"],
+            "Accuracy (%)": [ml_acc_bull, ml_acc_side, ml_acc_bear],
+            "# Predictions": [n_bull, n_side, n_bear],
+        })
+        with st.expander("📊 Per-class breakdown", expanded=False):
+            st.dataframe(class_acc_df.style.format({
+                "Accuracy (%)": "{:.1f}",
+                "# Predictions": "{:,}",
+            }), use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
@@ -1012,8 +1222,17 @@ if run_btn:
                       modeBarButtonsToRemove=["select2d", "lasso2d"])
 
     with ct1:
-        st.plotly_chart(chart_price(df_signals, result, strat_label),
-                        use_container_width=True, config=PLOTLY_CFG)
+        st.plotly_chart(
+            chart_price(df_signals, result, strat_label,
+                        ml_preds=ml_preds if ml_loaded else None),
+            use_container_width=True, config=PLOTLY_CFG,
+        )
+        if ml_loaded:
+            st.caption(
+                "🟢 Green tint = ML predicted BULLISH · "
+                "🔴 Red tint = BEARISH · 🟡 Amber tint = SIDEWAYS  |  "
+                "Hover a candle for full probability breakdown."
+            )
 
     with ct2:
         st.plotly_chart(chart_equity(result["equity_curve"], initial_capital, df_raw),
