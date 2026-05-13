@@ -706,6 +706,9 @@ def chart_price(df: pd.DataFrame, result: dict, title: str,
                 ml_preds: pd.DataFrame = None) -> go.Figure:
     trade_df = result.get("trade_log", pd.DataFrame())
 
+    # must be defined before make_subplots which uses it for row count
+    has_ml = ml_preds is not None and not ml_preds.empty
+
     fig = make_subplots(
         rows=4 if has_ml else 3, cols=1, shared_xaxes=True,
         vertical_spacing=0.02,
