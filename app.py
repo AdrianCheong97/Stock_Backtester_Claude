@@ -45,6 +45,27 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  CRYPTO POPULAR SYMBOLS
+# ─────────────────────────────────────────────────────────────────────────────
+CRYPTO_SYMBOLS = {
+    "Bitcoin (BTC)":       "BTC-USD",
+    "Ethereum (ETH)":      "ETH-USD",
+    "Solana (SOL)":        "SOL-USD",
+    "BNB (BNB)":           "BNB-USD",
+    "XRP (XRP)":           "XRP-USD",
+    "Cardano (ADA)":       "ADA-USD",
+    "Avalanche (AVAX)":    "AVAX-USD",
+    "Dogecoin (DOGE)":     "DOGE-USD",
+    "Chainlink (LINK)":    "LINK-USD",
+    "Polkadot (DOT)":      "DOT-USD",
+    "Litecoin (LTC)":      "LTC-USD",
+    "Shiba Inu (SHIB)":    "SHIB-USD",
+    "Custom symbol…":      "__CUSTOM__",
+}
+
+CRYPTO_INTERVALS = ["1d", "1wk", "1h"]   # yfinance supports hourly crypto
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  GLOBAL STYLES  — dark trading terminal aesthetic
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -161,6 +182,29 @@ def fetch_fmp(ticker: str, start: str, end: str, api_key: str) -> pd.DataFrame:
         return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
     except Exception as e:
         st.error(f"FMP error: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)   # shorter TTL — crypto moves fast
+def fetch_crypto(symbol: str, start: str, end: str, interval: str = "1d") -> pd.DataFrame:
+    """
+    Fetch crypto OHLCV from Yahoo Finance (e.g. 'BTC-USD').
+    Crypto trades 24/7, so we suppress the missing-weekend-data warning.
+    """
+    try:
+        import yfinance as yf
+        df = yf.download(symbol, start=start, end=end, interval=interval,
+                         progress=False, auto_adjust=True)
+        if df.empty:
+            return pd.DataFrame()
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+        df.index   = pd.to_datetime(df.index)
+        # yfinance returns tz-aware index for crypto; strip tz for consistency
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    except Exception as e:
+        st.error(f"Crypto fetch error: {e}")
         return pd.DataFrame()
 
 
@@ -587,7 +631,8 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
 def run_backtest(df: pd.DataFrame,
                  initial_capital: float = 10_000.0,
                  position_size_pct: float = 0.95,
-                 commission_pct: float = 0.001) -> dict:
+                 commission_pct: float = 0.001,
+                 trading_days: int = 252) -> dict:
     """
     Event-driven backtest.  signal=+1 → buy, signal=-1 → sell/close.
     Returns equity curve, trade log, and summary stats.
@@ -673,7 +718,7 @@ def run_backtest(df: pd.DataFrame,
                      if not trade_df.empty else 0.0)
 
     eq_ret   = equity_df["Equity"].pct_change().dropna()
-    sharpe   = (eq_ret.mean() / max(eq_ret.std(), 1e-9)) * np.sqrt(252) if len(eq_ret) > 1 else 0.0
+    sharpe   = (eq_ret.mean() / max(eq_ret.std(), 1e-9)) * np.sqrt(trading_days) if len(eq_ret) > 1 else 0.0
     roll_max = equity_df["Equity"].cummax()
     max_dd   = ((equity_df["Equity"] - roll_max) / roll_max * 100).min()
 
@@ -944,29 +989,55 @@ with st.sidebar:
     strat_key   = STRATEGIES[strat_label]
 
     st.markdown("---")
-    st.markdown("**Instrument**")
-    ticker    = st.text_input("Ticker Symbol", value="AAPL").upper().strip()
-    ca, cb    = st.columns(2)
-    with ca: years_back = st.selectbox("History (yrs)", [1, 2, 3, 5, 10], index=2)
-    with cb: interval   = st.selectbox("Interval",      ["1d", "1wk"], index=0)
+    st.markdown("**Asset Class**")
+    asset_mode = st.radio("", ["📈 Stocks / ETFs", "₿ Crypto"],
+                          label_visibility="collapsed", horizontal=True)
+    is_crypto = asset_mode == "₿ Crypto"
+
+    st.markdown("---")
+    if is_crypto:
+        st.markdown("**Crypto Instrument**")
+        crypto_choice = st.selectbox("Select coin", list(CRYPTO_SYMBOLS.keys()), index=0)
+        if CRYPTO_SYMBOLS[crypto_choice] == "__CUSTOM__":
+            ticker = st.text_input("Custom symbol (e.g. SOL-USD)", value="SOL-USD").upper().strip()
+        else:
+            ticker = CRYPTO_SYMBOLS[crypto_choice]
+        st.caption(f"Symbol: `{ticker}` · via Yahoo Finance")
+
+        ca, cb = st.columns(2)
+        with ca: years_back = st.selectbox("History (yrs)", [1, 2, 3, 5], index=1)
+        with cb: interval   = st.selectbox("Interval", CRYPTO_INTERVALS, index=0)
+
+        data_source = "yfinance (recommended)"   # FMP doesn't carry crypto
+        fmp_key = ""
+
+    else:
+        st.markdown("**Stock / ETF Instrument**")
+        ticker    = st.text_input("Ticker Symbol", value="AAPL").upper().strip()
+        ca, cb    = st.columns(2)
+        with ca: years_back = st.selectbox("History (yrs)", [1, 2, 3, 5, 10], index=2)
+        with cb: interval   = st.selectbox("Interval",      ["1d", "1wk"], index=0)
+
+        st.markdown("---")
+        st.markdown("**Data Source**")
+        data_source = st.radio("", ["yfinance (recommended)", "FMP (API key required)"],
+                               label_visibility="collapsed")
+        fmp_key = ""
+        if "FMP" in data_source:
+            fmp_key = st.text_input("FMP API Key", type="password",
+                                    help="Get a free key at financialmodelingprep.com")
 
     start_date = (datetime.today() - timedelta(days=years_back * 365)).strftime("%Y-%m-%d")
     end_date   = datetime.today().strftime("%Y-%m-%d")
 
     st.markdown("---")
-    st.markdown("**Data Source**")
-    data_source = st.radio("", ["yfinance (recommended)", "FMP (API key required)"],
-                           label_visibility="collapsed")
-    fmp_key = ""
-    if "FMP" in data_source:
-        fmp_key = st.text_input("FMP API Key", type="password",
-                                help="Get a free key at financialmodelingprep.com")
-
-    st.markdown("---")
     st.markdown("**Backtest Settings**")
+    if is_crypto:
+        st.caption("💡 Crypto trades 24/7 — no weekend gaps. Commission default reflects typical exchange fees.")
     initial_capital = st.number_input("Initial Capital ($)", value=10_000, step=1_000, min_value=1_000)
     position_size   = st.slider("Position Size (%)", 10, 100, 95, step=5) / 100
-    commission      = st.slider("Commission (bps)",  0,  50, 10, step=5)  / 10_000
+    default_commission = 15 if is_crypto else 10   # 15 bps for crypto, 10 for stocks
+    commission      = st.slider("Commission (bps)",  0,  50, default_commission, step=5)  / 10_000
 
     st.markdown("---")
     st.markdown("**Strategy Parameters**")
@@ -1009,9 +1080,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**🤖 ML Model**")
-    use_ml = st.toggle("Enable XGBoost Predictions", value=True,
+    use_ml = st.toggle("Enable XGBoost Predictions", value=not is_crypto,
                        help="Loads xgb_stock_model.json + model_artifacts.joblib "
                             "from the working directory")
+    if is_crypto and use_ml:
+        st.warning("⚠ The XGBoost model was trained on stock data. Crypto predictions may be unreliable.")
     if use_ml:
         st.caption(f"Model: `{XGB_MODEL_PATH}`")
         st.caption(f"Artifacts: `{XGB_ARTIFACTS_PATH}`")
@@ -1025,7 +1098,8 @@ st.markdown(
     '<span class="tag tag-blue">Python · Streamlit</span>'
     '<span class="tag tag-green">yfinance</span>'
     '<span class="tag tag-amber">FMP optional</span>'
-    '<span class="tag">4 Strategies</span>',
+    '<span class="tag">4 Strategies</span>'
+    '<span class="tag" style="border-color:#f7931a;color:#f7931a;background:#1a0f00;">₿ Crypto</span>',
     unsafe_allow_html=True,
 )
 st.markdown("")
@@ -1073,6 +1147,20 @@ A breakout-momentum hybrid. - NOTED DONCHIAN AND ATR DISABLED FOR TESTING
 
 st.markdown("---")
 
+# ── Crypto mode banner ───────────────────────────────────────────────────────
+if is_crypto:
+    st.markdown(
+        '<div class="custom-banner" style="border-color:#f7931a;background:linear-gradient(135deg,#1a0f00,#1a1300);">'
+        '<b style="color:#f7931a;">₿ Crypto Mode Active</b> — 24/7 markets · no weekend gaps · '
+        'Sharpe annualised over 365 days<br/>'
+        'Quick picks: <code>BTC-USD</code> &nbsp;·&nbsp; <code>ETH-USD</code> &nbsp;·&nbsp; '
+        '<code>SOL-USD</code> &nbsp;·&nbsp; <code>AVAX-USD</code> &nbsp;·&nbsp; <code>DOGE-USD</code><br/>'
+        '<span style="font-size:.7rem;color:#6b7280;">ML model was trained on equities — '
+        'crypto predictions are experimental.</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  RUN BACKTEST
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1082,7 +1170,9 @@ if run_btn:
         st.stop()
 
     with st.spinner(f"Fetching {ticker} ({years_back}y, {interval})…"):
-        if "FMP" in data_source:
+        if is_crypto:
+            df_raw = fetch_crypto(ticker, start_date, end_date, interval)
+        elif "FMP" in data_source:
             if not fmp_key:
                 st.error("Enter your FMP API key in the sidebar.")
                 st.stop()
@@ -1111,7 +1201,8 @@ if run_btn:
             "custom":    strategy_custom,
         }
         df_signals = fn_map[strat_key](df_raw.copy(), params)
-        result     = run_backtest(df_signals, initial_capital, position_size, commission)
+        result     = run_backtest(df_signals, initial_capital, position_size, commission,
+                                  trading_days=365 if is_crypto else 252)
 
     if not result:
         st.error("Backtest produced no results. Check data length and parameters.")
@@ -1285,7 +1376,7 @@ st.markdown("---")
 st.markdown(
     '<div style="text-align:center; color:#484f58; font-size:.7rem; font-family:IBM Plex Mono,monospace;">'
     'Past performance is not indicative of future results. For educational use only.<br/>'
-    'Data: Yahoo Finance (yfinance) · Financial Modelling Prep (optional)'
+    'Data: Yahoo Finance (yfinance) · Financial Modelling Prep (optional) · Crypto via yfinance (24/7)'
     '</div>',
     unsafe_allow_html=True,
 )
