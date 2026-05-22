@@ -48,7 +48,7 @@ st.set_page_config(
 #  CRYPTO POPULAR SYMBOLS
 # ─────────────────────────────────────────────────────────────────────────────
 CRYPTO_SYMBOLS = {
-    "Bitcoin (BTC)":       "BTC-USD",
+    "Bitcoin (BTC)":       "BTC",
     "Ethereum (ETH)":      "ETH-USD",
     "Solana (SOL)":        "SOL-USD",
     "BNB (BNB)":           "BNB-USD",
