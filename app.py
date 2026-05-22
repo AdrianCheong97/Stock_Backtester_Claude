@@ -405,6 +405,21 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
 _EXCLUDE_COLS = {"Open", "High", "Low", "Close", "Volume", "ticker",
                  "target", "target_enc", "signal"}
 
+_EXCLUDE_COLS = {
+    # Raw OHLCV
+    "Open", "High", "Low", "Close", "Volume",
+    # Metadata / targets
+    "ticker", "target", "target_enc",
+    # Raw price-level EMAs (replaced by dist_EMA* and slope)
+    "EMA_10", "EMA_20", "EMA_50", "EMA_200",
+    # Raw dollar ATR (replaced by ATR-normalised features)
+    "ATR",
+    # Raw Donchian price levels (DC_pos and DC_width_atr are used instead)
+    "DC_upper", "DC_lower", "DC_mid", "DC_width",
+    # Intermediate volume level used only to construct vol_ratio
+    "vol_ma20",
+}
+
 def _get_feature_cols(df: pd.DataFrame) -> list:
     return [c for c in df.columns if c not in _EXCLUDE_COLS]
 
