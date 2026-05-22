@@ -365,10 +365,10 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
         d["Beta"] = np.nan; d["Alpha"] = np.nan
 
     # ── 3a. OHLC deltas
-    df["HL_range_atr"]  = (df["High"] - df["Low"])   / atr   # day range / ATR
-    df["OC_delta_atr"]  = (df["Close"] - df["Open"])  / atr   # body size / ATR
-    df["HO_gap_atr"]    = (df["High"] - df["Open"])   / atr   # upper wick / ATR
-    df["OL_gap_atr"]    = (df["Open"] - df["Low"])    / atr   # lower wick / ATR
+    df["HL_range_atr"]  = (df["High"] - df["Low"])   / df["ATR"]    # day range / ATR
+    df["OC_delta_atr"]  = (df["Close"] - df["Open"])  / df["ATR"]    # body size / ATR
+    df["HO_gap_atr"]    = (df["High"] - df["Open"])   / df["ATR"]    # upper wick / ATR
+    df["OL_gap_atr"]    = (df["Open"] - df["Low"])    / df["ATR"]    # lower wick / ATR
 
     # Percentage-based (already scale-free)
     df["OC_pct"]        = (df["Close"] - df["Open"])  / df["Open"]
@@ -402,7 +402,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
 
     # ATR-normalised distance from each EMA (already scale-free)
     for p in [10, 20, 50, 200]:
-        df[f"dist_EMA{p}"] = (df["Close"] - df[f"EMA_{p}"]) / atr
+        df[f"dist_EMA{p}"] = (df["Close"] - df[f"EMA_{p}"]) / df["ATR"]
 
     # EMA slope as a percentage rate of change (scale-free)
     df["EMA10_slope"]   = df["EMA_10"].diff(3) / df["EMA_10"].shift(3)
@@ -415,7 +415,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     # ── 4b. Donchian position (already 0→1 bounded) ──────────────────
     df["DC_pos"]        = ((df["Close"] - df["DC_lower"]) /
                            df["DC_width"].replace(0, np.nan))
-    df["DC_width_atr"]  = df["DC_width"] / atr     # channel width in ATR units
+    df["DC_width_atr"]  = df["DC_width"] / df["ATR"]     # channel width in ATR units
 
     return d
 
