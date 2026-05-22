@@ -365,57 +365,57 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
         d["Beta"] = np.nan; d["Alpha"] = np.nan
 
     # ── 3a. OHLC deltas
-    df["HL_range_atr"]  = (df["High"] - df["Low"])   / df["ATR"]    # day range / ATR
-    df["OC_delta_atr"]  = (df["Close"] - df["Open"])  / df["ATR"]    # body size / ATR
-    df["HO_gap_atr"]    = (df["High"] - df["Open"])   / df["ATR"]    # upper wick / ATR
-    df["OL_gap_atr"]    = (df["Open"] - df["Low"])    / df["ATR"]    # lower wick / ATR
+    d["HL_range_atr"]  = (d["High"] - d["Low"])   / d["ATR"]    # day range / ATR
+    d["OC_delta_atr"]  = (d["Close"] - d["Open"])  / d["ATR"]    # body size / ATR
+    d["HO_gap_atr"]    = (d["High"] - d["Open"])   / d["ATR"]    # upper wick / ATR
+    d["OL_gap_atr"]    = (d["Open"] - d["Low"])    / d["ATR"]    # lower wick / ATR
 
     # Percentage-based (already scale-free)
-    df["OC_pct"]        = (df["Close"] - df["Open"])  / df["Open"]
-    df["gap_open_pct"]  = (df["Open"]  - df["Close"].shift(1)) / df["Close"].shift(1)
+    d["OC_pct"]        = (d["Close"] - d["Open"])  / d["Open"]
+    d["gap_open_pct"]  = (d["Open"]  - d["Close"].shift(1)) / d["Close"].shift(1)
 
     # HLC_avg is only meaningful relative to price; use its log-return equivalent
-    df["hlc_avg_ret"]   = np.log(
-        (df["High"] + df["Low"] + df["Close"]) / 3 /
-        ((df["High"].shift(1) + df["Low"].shift(1) + df["Close"].shift(1)) / 3)
+    d["hlc_avg_ret"]   = np.log(
+        (d["High"] + d["Low"] + d["Close"]) / 3 /
+        ((d["High"].shift(1) + d["Low"].shift(1) + d["Close"].shift(1)) / 3)
     )
 
     # ── 3b. Log returns (stationary by construction) ─────────────────
-    df["log_ret"]     = np.log(df["Close"] / df["Close"].shift(1))
-    df["log_ret_2"]   = np.log(df["Close"] / df["Close"].shift(2))
-    df["log_ret_5"]   = np.log(df["Close"] / df["Close"].shift(5))
-    df["log_ret_10"]  = np.log(df["Close"] / df["Close"].shift(10))
+    d["log_ret"]     = np.log(d["Close"] / d["Close"].shift(1))
+    d["log_ret_2"]   = np.log(d["Close"] / d["Close"].shift(2))
+    d["log_ret_5"]   = np.log(d["Close"] / d["Close"].shift(5))
+    d["log_ret_10"]  = np.log(d["Close"] / d["Close"].shift(10))
 
     # Realised volatility (20-day rolling std of log returns, annualised)
-    df["realised_vol"] = df["log_ret"].rolling(20).std() * np.sqrt(252)
+    d["realised_vol"] = d["log_ret"].rolling(20).std() * np.sqrt(252)
 
     # ── 3c. Volume features (scale-free) ─────────────────────────────
-    df["vol_ma20"]   = df["Volume"].rolling(20).mean()
-    df["vol_ratio"]  = df["Volume"] / df["vol_ma20"].replace(0, np.nan)
-    df["vol_log_ret"]= np.log(df["Volume"] / df["Volume"].shift(1))   # log-change in vol
+    d["vol_ma20"]   = d["Volume"].rolling(20).mean()
+    d["vol_ratio"]  = d["Volume"] / d["vol_ma20"].replace(0, np.nan)
+    d["vol_log_ret"]= np.log(d["Volume"] / d["Volume"].shift(1))   # log-change in vol
 
     # ── 4. Price vs EMA flags (scale-free) ───────────────────────────
-    df["above_EMA10"]  = (df["Close"] > df["EMA_10"]).astype(int)
-    df["above_EMA20"]  = (df["Close"] > df["EMA_20"]).astype(int)
-    df["above_EMA50"]  = (df["Close"] > df["EMA_50"]).astype(int)
-    df["above_EMA200"] = (df["Close"] > df["EMA_200"]).astype(int)
+    d["above_EMA10"]  = (d["Close"] > d["EMA_10"]).astype(int)
+    d["above_EMA20"]  = (d["Close"] > d["EMA_20"]).astype(int)
+    d["above_EMA50"]  = (d["Close"] > d["EMA_50"]).astype(int)
+    d["above_EMA200"] = (d["Close"] > d["EMA_200"]).astype(int)
 
     # ATR-normalised distance from each EMA (already scale-free)
     for p in [10, 20, 50, 200]:
-        df[f"dist_EMA{p}"] = (df["Close"] - df[f"EMA_{p}"]) / df["ATR"]
+        d[f"dist_EMA{p}"] = (d["Close"] - d[f"EMA_{p}"]) / d["ATR"]
 
     # EMA slope as a percentage rate of change (scale-free)
-    df["EMA10_slope"]   = df["EMA_10"].diff(3) / df["EMA_10"].shift(3)
-    df["EMA20_slope"]   = df["EMA_20"].diff(5) / df["EMA_20"].shift(5)
+    d["EMA10_slope"]   = d["EMA_10"].diff(3) / d["EMA_10"].shift(3)
+    d["EMA20_slope"]   = d["EMA_20"].diff(5) / d["EMA_20"].shift(5)
 
     # EMA crossover flags
-    df["EMA10_x_EMA20"] = (df["EMA_10"] > df["EMA_20"]).astype(int)
-    df["EMA20_x_EMA50"] = (df["EMA_20"] > df["EMA_50"]).astype(int)
+    d["EMA10_x_EMA20"] = (d["EMA_10"] > d["EMA_20"]).astype(int)
+    d["EMA20_x_EMA50"] = (d["EMA_20"] > d["EMA_50"]).astype(int)
 
     # ── 4b. Donchian position (already 0→1 bounded) ──────────────────
-    df["DC_pos"]        = ((df["Close"] - df["DC_lower"]) /
-                           df["DC_width"].replace(0, np.nan))
-    df["DC_width_atr"]  = df["DC_width"] / df["ATR"]     # channel width in ATR units
+    d["DC_pos"]        = ((d["Close"] - d["DC_lower"]) /
+                           d["DC_width"].replace(0, np.nan))
+    d["DC_width_atr"]  = d["DC_width"] / d["ATR"]     # channel width in ATR units
 
     return d
 
