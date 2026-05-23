@@ -428,6 +428,13 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     d["Price_x_EMA_crossUP"] =  ((d["EMA_10"] < d["Close"]) & (d["EMA_10"] < d["Open"]) & (d["EMA_10"].shift(1) >= d["Open"].shift(1)) ).astype(int) 
     d["Price_x_EMA_crossDOWN"] =  ((d["EMA_10"] > d["Close"]) & (d["EMA_10"] > d["Open"]) & (d["EMA_10"].shift(1) <= d["Open"].shift(1)) ).astype(int) 
 
+    d["EMA10_x_EMA20_crossdown"] =  ((d["EMA_10"] < d["EMA_20"]) & (d["EMA_10"].shift(1) >= d["EMA_20"].shift(1)) ).astype(int) 
+    d["EMA20_x_EMA50_crossdown"] = ((d["EMA_20"] < d["EMA_50"]) & (d["EMA_20"].shift(1) >= d["EMA_50"].shift(1)) ).astype(int) 
+
+    d["EMA10_x_EMA20_crossUP"] =  ((d["EMA_10"] > d["EMA_20"]) & (d["EMA_10"].shift(1) <= d["EMA_20"].shift(1)) ).astype(int) 
+    d["EMA20_x_EMA50_crossUP"] = ((d["EMA_20"] > d["EMA_50"]) & (d["EMA_20"].shift(1) <= d["EMA_50"].shift(1)) ).astype(int) 
+  
+
     return d
 
 
