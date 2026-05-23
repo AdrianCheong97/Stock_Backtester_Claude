@@ -532,8 +532,8 @@ def run_ml_predictions(df_raw: pd.DataFrame,
     trained_feats = artifacts.get("feature_cols", [])
     app_feats     = feat_cols  # the list built in run_ml_predictions
     missing = [f for f in trained_feats if f not in app_feats]
-    if missing is not None and len(missing) > 0:
-        print("Features in model but missing from app:", missing)
+    #if missing is not None and len(missing) > 0:
+    print("Features in model but missing from app:", missing)
 
     # Predict
     proba  = model.predict_proba(X_vals)          
