@@ -450,7 +450,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     
     # 3. Scale-Invariant Distance Metrics
     # Assuming d['atr'] is already pre-computed cleanly
-    d["feat_close_to_ema50_atr"] = (d["Close"] - d["ema_50"]) / (d["ATR"] + 1e-5)
+    d["feat_close_to_ema50_atr"] = (d["Close"] - d["EMA_50"]) / (d["ATR"] + 1e-5)
         
     # 4. Volume Z-Score
     roll_vol_mean = d["Volume"].rolling(window=22).mean()
