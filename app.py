@@ -391,6 +391,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
 
     # ── 3c. Volume features (scale-free) ─────────────────────────────
     d["vol_ma20"]   = d["Volume"].rolling(20).mean()
+    d["vol_ratio_5_20"]   = d["Volume"].rolling(5).mean()/d["vol_ma20"] 
     d["vol_ratio"]  = d["Volume"] / d["vol_ma20"].replace(0, np.nan)
     d["vol_log_ret"]= np.log(d["Volume"] / d["Volume"].shift(1))   # log-change in vol
 
@@ -416,6 +417,16 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     d["DC_pos"]        = ((d["Close"] - d["DC_lower"]) /
                            d["DC_width"].replace(0, np.nan))
     d["DC_width_atr"]  = d["DC_width"] / d["ATR"]     # channel width in ATR units
+
+    #price open above ema
+    d["Open_above_EMA10"]  = (d["Open"] > d["EMA_10"]).astype(int)
+    d["Open_above_EMA20"]  = (d["Open"] > d["EMA_20"]).astype(int)
+    d["Open_above_EMA50"]  = (d["Open"] > d["EMA_50"]).astype(int)
+    d["Open_above_EMA200"] = (d["Open"] > d["EMA_200"]).astype(int)
+  
+    #price cross above ema (close)
+    d["Price_x_EMA_crossUP"] =  ((d["EMA_10"] < d["Close"]) & (d["EMA_10"] < d["Open"]) & (d["EMA_10"].shift(1) >= d["Open"].shift(1)) ).astype(int) 
+    d["Price_x_EMA_crossDOWN"] =  ((d["EMA_10"] > d["Close"]) & (d["EMA_10"] > d["Open"]) & (d["EMA_10"].shift(1) <= d["Open"].shift(1)) ).astype(int) 
 
     return d
 
