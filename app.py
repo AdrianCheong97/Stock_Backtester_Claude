@@ -370,7 +370,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     d["HO_gap_atr"]    = (d["High"] - d["Open"])   / d["ATR"]    # upper wick / ATR
     d["OL_gap_atr"]    = (d["Open"] - d["Low"])    / d["ATR"]    # lower wick / ATR
 
-    # Percentage-based (already scale-free)
+# Percentage-based (already scale-free)
     d["OC_pct"]        = (d["Close"] - d["Open"])  / d["Open"]
     d["gap_open_pct"]  = (d["Open"]  - d["Close"].shift(1)) / d["Close"].shift(1)
 
@@ -401,23 +401,6 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     d["above_EMA50"]  = (d["Close"] > d["EMA_50"]).astype(int)
     d["above_EMA200"] = (d["Close"] > d["EMA_200"]).astype(int)
 
-    # ATR-normalised distance from each EMA (already scale-free)
-    for p in [10, 20, 50, 200]:
-        d[f"dist_EMA{p}"] = (d["Close"] - d[f"EMA_{p}"]) / d["ATR"]
-
-    # EMA slope as a percentage rate of change (scale-free)
-    d["EMA10_slope"]   = d["EMA_10"].diff(3) / d["EMA_10"].shift(3)
-    d["EMA20_slope"]   = d["EMA_20"].diff(5) / d["EMA_20"].shift(5)
-
-    # EMA crossover flags
-    d["EMA10_x_EMA20"] = (d["EMA_10"] > d["EMA_20"]).astype(int)
-    d["EMA20_x_EMA50"] = (d["EMA_20"] > d["EMA_50"]).astype(int)
-
-    # ── 4b. Donchian position (already 0→1 bounded) ──────────────────
-    d["DC_pos"]        = ((d["Close"] - d["DC_lower"]) /
-                           d["DC_width"].replace(0, np.nan))
-    d["DC_width_atr"]  = d["DC_width"] / d["ATR"]     # channel width in ATR units
-
     #price open above ema
     d["Open_above_EMA10"]  = (d["Open"] > d["EMA_10"]).astype(int)
     d["Open_above_EMA20"]  = (d["Open"] > d["EMA_20"]).astype(int)
@@ -427,6 +410,18 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     #price cross above ema (close)
     d["Price_x_EMA_crossUP"] =  ((d["EMA_10"] < d["Close"]) & (d["EMA_10"] < d["Open"]) & (d["EMA_10"].shift(1) >= d["Open"].shift(1)) ).astype(int) 
     d["Price_x_EMA_crossDOWN"] =  ((d["EMA_10"] > d["Close"]) & (d["EMA_10"] > d["Open"]) & (d["EMA_10"].shift(1) <= d["Open"].shift(1)) ).astype(int) 
+  
+    # ATR-normalised distance from each EMA (already scale-free)
+    for p in [10, 20, 50, 200]:
+        d[f"dist_EMA{p}"] = (d["Close"] - d[f"EMA_{p}"]) / atr
+
+    # EMA slope as a percentage rate of change (scale-free)
+    d["EMA10_slope"]   = d["EMA_10"].diff(3) / d["EMA_10"].shift(3)
+    d["EMA20_slope"]   = d["EMA_20"].diff(5) / d["EMA_20"].shift(5)
+
+    # EMA crossover flags
+    d["EMA10_x_EMA20"] = (d["EMA_10"] > d["EMA_20"]).astype(int)
+    d["EMA20_x_EMA50"] = (d["EMA_20"] > d["EMA_50"]).astype(int)
 
     d["EMA10_x_EMA20_crossdown"] =  ((d["EMA_10"] < d["EMA_20"]) & (d["EMA_10"].shift(1) >= d["EMA_20"].shift(1)) ).astype(int) 
     d["EMA20_x_EMA50_crossdown"] = ((d["EMA_20"] < d["EMA_50"]) & (d["EMA_20"].shift(1) >= d["EMA_50"].shift(1)) ).astype(int) 
@@ -434,6 +429,10 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     d["EMA10_x_EMA20_crossUP"] =  ((d["EMA_10"] > d["EMA_20"]) & (d["EMA_10"].shift(1) <= d["EMA_20"].shift(1)) ).astype(int) 
     d["EMA20_x_EMA50_crossUP"] = ((d["EMA_20"] > d["EMA_50"]) & (d["EMA_20"].shift(1) <= d["EMA_50"].shift(1)) ).astype(int) 
   
+    # ── 4b. Donchian position (already 0→1 bounded) ──────────────────
+    d["DC_pos"]        = ((d["Close"] - d["DC_lower"]) /
+                           d["DC_width"].replace(0, np.nan))
+    d["DC_width_atr"]  = d["DC_width"] / atr     # 
 
     return d
 
