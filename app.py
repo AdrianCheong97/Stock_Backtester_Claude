@@ -450,8 +450,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     
     # 3. Scale-Invariant Distance Metrics
     # Assuming d['atr'] is already pre-computed cleanly
-    if "atr" in d.columns and "ema_50" in d.columns:
-        d["feat_close_to_ema50_atr"] = (d["Close"] - d["ema_50"]) / (d["ATR"] + 1e-5)
+    d["feat_close_to_ema50_atr"] = (d["Close"] - d["ema_50"]) / (d["ATR"] + 1e-5)
         
     # 4. Volume Z-Score
     roll_vol_mean = d["Volume"].rolling(window=22).mean()
@@ -529,6 +528,12 @@ def run_ml_predictions(df_raw: pd.DataFrame,
     feat_cols = [c for c in feat_cols if c in X_scaled_df.columns]
 
     X_vals = X_scaled_df[feat_cols].values
+
+    trained_feats = artifacts.get("feature_cols", [])
+    app_feats     = feat_cols  # the list built in run_ml_predictions
+    missing = [f for f in trained_feats if f not in app_feats]
+    if missing is not None and len(missing) > 0:
+        print("Features in model but missing from app:", missing)
 
     # Predict
     proba  = model.predict_proba(X_vals)          
