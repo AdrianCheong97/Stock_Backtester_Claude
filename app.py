@@ -472,21 +472,30 @@ def run_ml_predictions(df_raw: pd.DataFrame,
     close direction so we know accuracy at backtest time.
     """
     feat_df   = build_ml_features(df_raw, spy_close)
-    feat_cols = artifacts.get("feature_cols", _get_feature_cols(feat_df))
+    
+    # 1. Get ALL engineered features (42 columns) to satisfy the scaler
+    all_feat_cols = _get_feature_cols(feat_df)
+    X_full = feat_df[all_feat_cols].copy()
+    X_full = X_full.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    # Only keep columns that actually exist after feature building
-    feat_cols = [c for c in feat_cols if c in feat_df.columns]
-
-    X = feat_df[feat_cols].copy()
-    X = X.replace([np.inf, -np.inf], np.nan)
-
+    # 2. Scale the full 42-column dataset
     scaler = artifacts.get("scaler")
     if scaler is not None:
-        X_vals = scaler.transform(X.fillna(0))
+        # Use .values to prevent sklearn feature name warnings
+        X_scaled = scaler.transform(X_full.values) 
+        X_scaled_df = pd.DataFrame(X_scaled, columns=all_feat_cols, index=feat_df.index)
     else:
-        X_vals = X.fillna(0).values
+        X_scaled_df = X_full
 
-    proba  = model.predict_proba(X_vals)          # (n, 3) — BEARISH/SIDEWAYS/BULLISH
+    # 3. Retrieve the top 40 features expected by XGBoost from artifacts
+    feat_cols = artifacts.get("feature_cols", all_feat_cols)
+    feat_cols = [c for c in feat_cols if c in X_scaled_df.columns]
+
+    # 4. Slice the SCALED dataframe down to the 40 features
+    X_vals = X_scaled_df[feat_cols].values
+
+    # Predict
+    proba  = model.predict_proba(X_vals)          
     labels = [LABEL_NAMES[i] for i in proba.argmax(axis=1)]
 
     out = pd.DataFrame({
@@ -504,7 +513,6 @@ def run_ml_predictions(df_raw: pd.DataFrame,
     actual_dir[actual_ret < -THRESH] = "BEARISH"
     out["actual_dir"]   = actual_dir
     out["pred_correct"] = (out["pred_label"] == out["actual_dir"]).astype(int)
-
     return out
 
 
