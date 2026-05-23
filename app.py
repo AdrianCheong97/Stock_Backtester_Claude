@@ -394,7 +394,8 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     d["vol_ratio_5_20"]   = d["Volume"].rolling(5).mean()/d["vol_ma20"] 
     d["vol_ratio"]  = d["Volume"] / d["vol_ma20"].replace(0, np.nan)
     d["vol_log_ret"]= np.log(d["Volume"] / d["Volume"].shift(1))   # log-change in vol
-
+    d["vol_ret"]= (d["Volume"] / d["Volume"].shift(1))  
+    
     # ── 4. Price vs EMA flags (scale-free) ───────────────────────────
     d["above_EMA10"]  = (d["Close"] > d["EMA_10"]).astype(int)
     d["above_EMA20"]  = (d["Close"] > d["EMA_20"]).astype(int)
@@ -472,7 +473,7 @@ def run_ml_predictions(df_raw: pd.DataFrame,
     close direction so we know accuracy at backtest time.
     """
     feat_df   = build_ml_features(df_raw, spy_close)
-    
+
     # 1. Get ALL engineered features (42 columns) to satisfy the scaler
     all_feat_cols = _get_feature_cols(feat_df)
     X_full = feat_df[all_feat_cols].copy()
