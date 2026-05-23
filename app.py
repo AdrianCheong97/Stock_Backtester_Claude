@@ -395,7 +395,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     d["vol_ratio"]  = d["Volume"] / d["vol_ma20"].replace(0, np.nan)
     d["vol_log_ret"]= np.log(d["Volume"] / d["Volume"].shift(1))   # log-change in vol
     d["vol_ret"]= (d["Volume"] / d["Volume"].shift(1))  
-    
+
     # ── 4. Price vs EMA flags (scale-free) ───────────────────────────
     d["above_EMA10"]  = (d["Close"] > d["EMA_10"]).astype(int)
     d["above_EMA20"]  = (d["Close"] > d["EMA_20"]).astype(int)
@@ -472,27 +472,32 @@ def run_ml_predictions(df_raw: pd.DataFrame,
     pred_correct compares the predicted direction to the ACTUAL next-day
     close direction so we know accuracy at backtest time.
     """
-    feat_df   = build_ml_features(df_raw, spy_close)
-
-    # 1. Get ALL engineered features (42 columns) to satisfy the scaler
+    # 1. Generate all features (now 43 columns)
+    feat_df = build_ml_features(df_raw, spy_close)
     all_feat_cols = _get_feature_cols(feat_df)
+    
     X_full = feat_df[all_feat_cols].copy()
     X_full = X_full.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    # 2. Scale the full 42-column dataset
     scaler = artifacts.get("scaler")
     if scaler is not None:
-        # Use .values to prevent sklearn feature name warnings
-        X_scaled = scaler.transform(X_full.values) 
-        X_scaled_df = pd.DataFrame(X_scaled, columns=all_feat_cols, index=feat_df.index)
+        # Get the EXACT number of features the loaded scaler expects
+        expected_scaler_features = getattr(scaler, "n_features_in_", len(all_feat_cols))
+        
+        # If there's a mismatch (e.g., using an old scaler artifact), 
+        # slice the columns to match what the scaler expects so it doesn't crash
+        scaler_input_cols = all_feat_cols[:expected_scaler_features]
+        
+        X_scaled = scaler.transform(X_full[scaler_input_cols].values)
+        X_scaled_df = pd.DataFrame(X_scaled, columns=scaler_input_cols, index=feat_df.index)
     else:
         X_scaled_df = X_full
 
-    # 3. Retrieve the top 40 features expected by XGBoost from artifacts
+    # 2. Retrieve the top 40 features expected by XGBoost from artifacts
     feat_cols = artifacts.get("feature_cols", all_feat_cols)
+    # Ensure we only look for features that survived the scaler transformation
     feat_cols = [c for c in feat_cols if c in X_scaled_df.columns]
 
-    # 4. Slice the SCALED dataframe down to the 40 features
     X_vals = X_scaled_df[feat_cols].values
 
     # Predict
@@ -506,7 +511,7 @@ def run_ml_predictions(df_raw: pd.DataFrame,
         "pred_BULLISH":  proba[:, 2],
     }, index=feat_df.index)
 
-    # Actual next-day direction (ground truth for accuracy calculation)
+    # Actual next-day direction
     actual_ret  = np.log(df_raw["Close"] / df_raw["Close"].shift(1)).shift(-1)
     THRESH      = 0.003
     actual_dir  = pd.Series("SIDEWAYS", index=df_raw.index)
@@ -514,6 +519,7 @@ def run_ml_predictions(df_raw: pd.DataFrame,
     actual_dir[actual_ret < -THRESH] = "BEARISH"
     out["actual_dir"]   = actual_dir
     out["pred_correct"] = (out["pred_label"] == out["actual_dir"]).astype(int)
+
     return out
 
 
