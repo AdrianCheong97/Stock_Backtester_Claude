@@ -413,7 +413,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
   
     # ATR-normalised distance from each EMA (already scale-free)
     for p in [10, 20, 50, 200]:
-        d[f"dist_EMA{p}"] = (d["Close"] - d[f"EMA_{p}"]) / atr
+        d[f"dist_EMA{p}"] = (d["Close"] - d[f"EMA_{p}"]) / d["ATR"]  
 
     # EMA slope as a percentage rate of change (scale-free)
     d["EMA10_slope"]   = d["EMA_10"].diff(3) / d["EMA_10"].shift(3)
@@ -432,7 +432,7 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
     # ── 4b. Donchian position (already 0→1 bounded) ──────────────────
     d["DC_pos"]        = ((d["Close"] - d["DC_lower"]) /
                            d["DC_width"].replace(0, np.nan))
-    d["DC_width_atr"]  = d["DC_width"] / atr     # 
+    d["DC_width_atr"]  = d["DC_width"] / d["ATR"]       # 
 
     return d
 
