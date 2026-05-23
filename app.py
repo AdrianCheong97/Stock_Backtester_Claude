@@ -435,6 +435,36 @@ def build_ml_features(df: pd.DataFrame, spy_close: pd.Series) -> pd.DataFrame:
                            d["DC_width"].replace(0, np.nan))
     d["DC_width_atr"]  = d["DC_width"] / d["ATR"]       # 
 
+        # 1. Microstructure Candlestick Ratios
+    candle_range = d["High"] - d["Low"]
+    # Prevent divide-by-zero on flat candles
+    candle_range = candle_range.replace(0, 1e-5) 
+    
+    d["feat_candle_body_ratio"] = (d["Close"] - d["Open"]).abs() / candle_range
+    d["feat_upper_shadow_ratio"] = (d["High"] - d[["Open", "Close"]].max(axis=1)) / candle_range
+    d["feat_lower_shadow_ratio"] = (d[["Open", "Close"]].min(axis=1) - d["Low"]) / candle_range
+    
+    # 2. Gaps
+    d["feat_overnight_gap"] = np.log(d["Open"] / d["Close"].shift(1))
+    d["feat_intraday_ext"] = np.log(d["Close"] / d["Open"])
+    
+    # 3. Scale-Invariant Distance Metrics
+    # Assuming d['atr'] is already pre-computed cleanly
+    if "atr" in d.columns and "ema_50" in d.columns:
+        d["feat_close_to_ema50_atr"] = (d["Close"] - d["ema_50"]) / (d["ATR"] + 1e-5)
+        
+    # 4. Volume Z-Score
+    roll_vol_mean = d["Volume"].rolling(window=22).mean()
+    roll_vol_std = d["Volume"].rolling(window=22).std()
+    d["feat_volume_zscore"] = (d["Volume"] - roll_vol_mean) / (roll_vol_std + 1e-5)
+    
+    # 5. Volatility Ratio
+    log_ret = np.log(d["Close"] / d["Close"].shift(1))
+    vol_short = log_ret.rolling(5).std()
+    vol_long = log_ret.rolling(22).std()
+    d["feat_volatility_ratio"] = vol_short / (vol_long + 1e-5)
+
+
     return d
 
 
