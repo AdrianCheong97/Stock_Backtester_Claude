@@ -246,6 +246,33 @@ def donchian(high: pd.Series, low: pd.Series, n: int = 20):
     mid   = (upper + lower) / 2
     return upper, lower, mid
 
+def vwap_weekly(df: pd.DataFrame) -> pd.Series:
+    """
+    Weekly-anchored VWAP: resets every Monday (or first trading day of each week).
+    VWAP = cumulative(price × volume) / cumulative(volume) within each week.
+    """
+    d = df.copy()
+    d["_tp"]   = (d["High"] + d["Low"] + d["Close"]) / 3
+    d["_tpv"]  = d["_tp"] * d["Volume"]
+    d["_week"] = d.index.isocalendar().week.astype(int) + d.index.year * 100
+
+    vwap_vals = np.empty(len(d))
+    cum_tpv   = 0.0
+    cum_vol   = 0.0
+    prev_week = None
+
+    for i, (idx, row) in enumerate(d.iterrows()):
+        w = row["_week"]
+        if w != prev_week:
+            cum_tpv  = 0.0
+            cum_vol  = 0.0
+            prev_week = w
+        cum_tpv += row["_tpv"]
+        cum_vol  += row["Volume"]
+        vwap_vals[i] = cum_tpv / cum_vol if cum_vol > 0 else np.nan
+
+    return pd.Series(vwap_vals, index=d.index, name="VWAP")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  XGBoost MODEL — loader + feature builder
@@ -726,7 +753,99 @@ def strategy_custom(df: pd.DataFrame, params: dict) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  BACKTEST ENGINE
+#  STRATEGY 5 — VWAP Breakout + Volume Surge + 200 EMA
+# ─────────────────────────────────────────────────────────────────────────────
+def strategy_vwap_volume(df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    """
+    ┌────────────────────────────────────────────────────────────────────┐
+    │  VWAP BREAKOUT + VOLUME SURGE + 200 EMA                           │
+    │                                                                    │
+    │  Indicators computed:                                              │
+    │    • Weekly-anchored VWAP                                          │
+    │    • 10-day rolling mean of volume  (vol_ma10)                     │
+    │    • 20-day rolling mean of volume  (vol_ma20)                     │
+    │    • 200 EMA                                                       │
+    │                                                                    │
+    │  Entry (ALL must be true):                                         │
+    │    1. VWAP breakout candle: prev candle opened & closed BELOW      │
+    │       VWAP; current candle CLOSES ABOVE VWAP                       │
+    │    2. Volume surge: current volume > vol_ma20 × surge_mult         │
+    │    3. vol_ma10 crosses above vol_ma20 (current ≥ previous cross)   │
+    │    4. Close > 200 EMA                                              │
+    │                                                                    │
+    │  Exit (first trigger wins):                                        │
+    │    1. Close drops back below VWAP                                  │
+    │    2. Close drops below 200 EMA                                    │
+    │    3. ATR trailing stop from swing high                            │
+    └────────────────────────────────────────────────────────────────────┘
+    """
+    d = df.copy()
+
+    # ── Indicators ──────────────────────────────────────────────────────────
+    d["VWAP"]     = vwap_weekly(d)
+    d["EMA200"]   = ema(d["Close"], 200)
+    d["vol_ma10"] = d["Volume"].rolling(10).mean()
+    d["vol_ma20"] = d["Volume"].rolling(20).mean()
+    d["ATR14"]    = atr(d, 14)
+    d["signal"]   = 0
+
+    in_trade          = False
+    high_since_entry  = 0.0
+    surge_mult        = params.get("vol_surge_mult", 1.5)
+    atr_trail         = params.get("atr_trail", 2.0)
+
+    for i in range(2, len(d)):
+        prev_open  = d["Open"].iloc[i - 1]
+        prev_close = d["Close"].iloc[i - 1]
+        prev_vwap  = d["VWAP"].iloc[i - 1]
+
+        curr_close  = d["Close"].iloc[i]
+        curr_vwap   = d["VWAP"].iloc[i]
+        curr_ema200 = d["EMA200"].iloc[i]
+        curr_vol    = d["Volume"].iloc[i]
+        curr_vol20  = d["vol_ma20"].iloc[i]
+        curr_vol10  = d["vol_ma10"].iloc[i]
+        prev_vol10  = d["vol_ma10"].iloc[i - 1]
+        prev_vol20  = d["vol_ma20"].iloc[i - 1]
+        curr_atr    = d["ATR14"].iloc[i]
+
+        if pd.isna(curr_ema200) or pd.isna(curr_vol20) or pd.isna(curr_vol10):
+            continue
+
+        if not in_trade:
+            # Condition 1 — VWAP breakout candle
+            prev_below_vwap = (prev_open < prev_vwap) and (prev_close < prev_vwap)
+            curr_above_vwap = curr_close > curr_vwap
+            vwap_breakout   = prev_below_vwap and curr_above_vwap
+
+            # Condition 2 — volume surge on breakout candle
+            vol_surge = curr_vol > surge_mult * curr_vol20
+
+            # Condition 3 — vol_ma10 crosses above vol_ma20
+            vol_ma_cross = (prev_vol10 <= prev_vol20) and (curr_vol10 > curr_vol20)
+            # OR already crossed (ma10 already above ma20 and both rising)
+            vol_ma_above = curr_vol10 > curr_vol20
+
+            # Condition 4 — price above 200 EMA
+            above_ema200 = curr_close > curr_ema200
+
+            if vwap_breakout and vol_surge and vol_ma_above and above_ema200:
+                d.iloc[i, d.columns.get_loc("signal")] = 1
+                in_trade         = True
+                high_since_entry = curr_close
+        else:
+            high_since_entry = max(high_since_entry, curr_close)
+            trail_stop       = high_since_entry - atr_trail * curr_atr
+
+            exit_vwap  = curr_close < curr_vwap
+            exit_ema   = curr_close < curr_ema200
+            exit_trail = curr_close < trail_stop
+
+            if exit_vwap or exit_ema or exit_trail:
+                d.iloc[i, d.columns.get_loc("signal")] = -1
+                in_trade = False
+
+    return d
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_backtest(df: pd.DataFrame,
@@ -937,6 +1056,8 @@ def chart_price(df: pd.DataFrame, result: dict, title: str,
         "DON_U":  ("#3fb950", 1), 
         "DON_L":  ("#f85149", 1),
         "DON_M":  ("#d29922", 1),
+        "VWAP":   ("#f0e130", 1.8),   # bright yellow — easy to see
+        "EMA200": ("#ff6b9d", 1.5),   # pink/magenta for 200 EMA
     }
     for col, (colour, w) in overlay_cfg.items():
         if col in df.columns:
@@ -969,6 +1090,16 @@ def chart_price(df: pd.DataFrame, result: dict, title: str,
     fig.add_trace(go.Bar(x=df.index, y=df["Volume"],
                          marker_color=vol_colors, opacity=.55, name="Volume"), row=2, col=1)
 
+    # Volume moving averages (for VWAP strategy)
+    if "vol_ma10" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["vol_ma10"],
+                                 line=dict(color="#58a6ff", width=1.2, dash="dot"),
+                                 name="Vol MA10", opacity=0.85), row=2, col=1)
+    if "vol_ma20" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["vol_ma20"],
+                                 line=dict(color="#ffa657", width=1.2, dash="dot"),
+                                 name="Vol MA20", opacity=0.85), row=2, col=1)
+
     # Sub-oscillator
     if "RSI" in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df["RSI"],
@@ -986,6 +1117,13 @@ def chart_price(df: pd.DataFrame, result: dict, title: str,
     elif "RSI14" in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df["RSI14"],
                                  line=dict(color="#d2a8ff", width=1.2), name="RSI"), row=3, col=1)
+    elif "VWAP" in df.columns:
+        # Price vs VWAP spread (%) — specific to strategy 5
+        vwap_spread = (df["Close"] - df["VWAP"]) / df["VWAP"] * 100
+        fig.add_trace(go.Scatter(x=df.index, y=vwap_spread,
+                                 line=dict(color="#f0e130", width=1.2),
+                                 name="Price vs VWAP (%)"), row=3, col=1)
+        fig.add_hline(y=0, line_dash="dot", line_color="#484f58", opacity=0.6, row=3, col=1)
     elif "ATR14" in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df["ATR14"],
                                  line=dict(color="#d2a8ff", width=1.2), name="ATR"), row=3, col=1)
@@ -1075,10 +1213,11 @@ def chart_monthly(equity_df: pd.DataFrame) -> go.Figure:
 #  SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
 STRATEGIES = {
-    "1 — RSI Mean Reversion + Bollinger Bands":          "rsi_bb",
-    "2 — MACD Momentum Crossover":                       "macd",
-    "3 — Golden / Death Cross (50/200 EMA)":             "ema_cross",
-    "4 — ★ Custom: Donchian + Multi-EMA + Breakout":     "custom",
+    "1 — RSI Mean Reversion + Bollinger Bands":               "rsi_bb",
+    "2 — MACD Momentum Crossover":                            "macd",
+    "3 — Golden / Death Cross (50/200 EMA)":                  "ema_cross",
+    "4 — ★ Custom: Donchian + Multi-EMA + Breakout":          "custom",
+    "5 — ⚡ VWAP Breakout + Volume Surge + 200 EMA":          "vwap_volume",
 }
 
 with st.sidebar:
@@ -1176,6 +1315,25 @@ with st.sidebar:
         params["body_factor"]     = st.slider("Body/ATR Filter",  0.2, 1.5, 0.6, 0.05)
         params["atr_trail"]       = st.slider("ATR Trailing Stop",0.5, 5.0, 2.0, 0.25)
 
+    elif strat_key == "vwap_volume":
+        st.markdown(
+            '<div class="custom-banner" style="border-color:#58a6ff;">'
+            '<b style="color:#58a6ff;">⚡ VWAP BREAKOUT STRATEGY</b><br/>'
+            'Weekly VWAP · Volume Surge · 200 EMA Trend Filter<br/>'
+            'Entry: VWAP breakout candle + vol spike + vol MA cross + above 200 EMA</div>',
+            unsafe_allow_html=True,
+        )
+        params["vol_surge_mult"] = st.slider(
+            "Volume Surge Multiplier",
+            min_value=1.0, max_value=4.0, value=1.5, step=0.1,
+            help="Breakout candle volume must exceed this × 20-day avg volume"
+        )
+        params["atr_trail"] = st.slider(
+            "ATR Trailing Stop",
+            min_value=0.5, max_value=5.0, value=2.0, step=0.25,
+            help="Exit when price falls more than N × ATR below swing high"
+        )
+
     st.markdown("---")
     run_btn = st.button("▶  RUN BACKTEST", use_container_width=True)
 
@@ -1199,7 +1357,7 @@ st.markdown(
     '<span class="tag tag-blue">Python · Streamlit</span>'
     '<span class="tag tag-green">yfinance</span>'
     '<span class="tag tag-amber">FMP optional</span>'
-    '<span class="tag">4 Strategies</span>'
+    '<span class="tag">5 Strategies</span>'
     '<span class="tag" style="border-color:#f7931a;color:#f7931a;background:#1a0f00;">₿ Crypto</span>',
     unsafe_allow_html=True,
 )
@@ -1208,7 +1366,7 @@ st.markdown("")
 # ─────────────────────────────────────────────────────────────────────────────
 #  STRATEGY DESCRIPTION TABS
 # ─────────────────────────────────────────────────────────────────────────────
-t1, t2, t3, t4 = st.tabs(["RSI + Bollinger", "MACD Crossover", "EMA Cross", "★ Custom"])
+t1, t2, t3, t4, t5 = st.tabs(["RSI + Bollinger", "MACD Crossover", "EMA Cross", "★ Custom", "⚡ VWAP + Volume"])
 
 with t1:
     st.markdown("""
@@ -1244,6 +1402,22 @@ A breakout-momentum hybrid. - NOTED DONCHIAN AND ATR DISABLED FOR TESTING
 - 🟢 **Entry**: PRICE > EMA_FAST AND IF GAP UP ABOVE EMA FAST
 - 🔴 **Exit**: PRICE BREAKDOWN THROUGH EMA_FAST
 - **Customise**: Edit `strategy_custom()` in `app.py`. All parameters are tunable in the sidebar.
+""")
+
+with t5:
+    st.markdown("""
+**⚡ VWAP Breakout + Volume Surge + 200 EMA**
+Catches institutional-backed breakouts above VWAP with volume confirmation and a long-term trend filter.
+- 🟢 **Entry** — ALL four must fire on the same candle:
+  1. **VWAP Breakout**: prior candle opened *and* closed below weekly VWAP; current candle closes *above* VWAP
+  2. **Volume Surge**: breakout candle volume > *N ×* 20-day average volume (default 1.5×)
+  3. **Vol MA Cross**: 10-day volume MA is above 20-day volume MA (momentum building)
+  4. **Trend filter**: close is above the 200 EMA
+- 🔴 **Exit** — first trigger wins:
+  1. Close drops back below VWAP (breakout failure)
+  2. Close drops below 200 EMA (trend breakdown)
+  3. ATR trailing stop from swing high
+- **Best on**: Mid/large-cap equities and ETFs with reliable volume data; works well around earnings catalysts or sector rotations.
 """)
 
 st.markdown("---")
@@ -1296,10 +1470,11 @@ if run_btn:
 
     with st.spinner("Running backtest…"):
         fn_map = {
-            "rsi_bb":    strategy_rsi_bollinger,
-            "macd":      strategy_macd,
-            "ema_cross": strategy_ema_cross,
-            "custom":    strategy_custom,
+            "rsi_bb":      strategy_rsi_bollinger,
+            "macd":        strategy_macd,
+            "ema_cross":   strategy_ema_cross,
+            "custom":      strategy_custom,
+            "vwap_volume": strategy_vwap_volume,
         }
         df_signals = fn_map[strat_key](df_raw.copy(), params)
         result     = run_backtest(df_signals, initial_capital, position_size, commission,
