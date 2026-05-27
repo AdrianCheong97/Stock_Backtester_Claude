@@ -846,6 +846,69 @@ def strategy_vwap_volume(df: pd.DataFrame, params: dict) -> pd.DataFrame:
                 in_trade = False
 
     return d
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  STRATEGY 6 — EMA and Vol Divergence
+# ─────────────────────────────────────────────────────────────────────────────
+def strategy_ema_vol_divergence(df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    """
+    LONG when Price is trending (Price > Fast EMA > Slow EMA) AND 
+    Volume surges (Short Volume MA crosses above Slow Volume MA).
+    EXIT when Price closes below the Fast EMA OR hits the ATR trailing stop.
+    """
+    d = df.copy()
+    
+    # EMAs for Price Trend
+    d["ema_fast"] = ema(d["Close"], params.get("ema_fast", 10))
+    d["ema_slow"] = ema(d["Close"], params.get("ema_slow", 50))
+    
+    # SMAs for Volume Divergence (Spike)
+    d["vol_fast"] = sma(d["Volume"], params.get("vol_fast_period", 5))
+    d["vol_slow"] = sma(d["Volume"], params.get("vol_slow_period", 20))
+    
+    d["ATR14"] = atr(d, 14)
+    d["signal"] = 0
+
+    in_trade = False
+    high_since_entry = 0.0
+
+    for i in range(1, len(d)):
+        curr_close = d["Close"].iloc[i]
+        
+        # Price trend conditions
+        ema_fast = d["ema_fast"].iloc[i]
+        ema_slow = d["ema_slow"].iloc[i]
+        
+        # Volume crossover conditions
+        prev_vol_fast = d["vol_fast"].iloc[i - 1]
+        prev_vol_slow = d["vol_slow"].iloc[i - 1]
+        curr_vol_fast = d["vol_fast"].iloc[i]
+        curr_vol_slow = d["vol_slow"].iloc[i]
+        
+        curr_atr = d["ATR14"].iloc[i]
+        
+        # Logic Flags
+        ema_aligned = curr_close > ema_fast > ema_slow
+        vol_crossup = (prev_vol_fast <= prev_vol_slow) and (curr_vol_fast > curr_vol_slow)
+        
+        if not in_trade:
+            # Entry: Uptrend confirmed + Sudden volume spike
+            if ema_aligned and vol_crossup:
+                d.iloc[i, d.columns.get_loc("signal")] = 1
+                in_trade = True
+                high_since_entry = curr_close
+        else:
+            high_since_entry = max(high_since_entry, curr_close)
+            trail_stop = high_since_entry - params.get("atr_trail", 2.0) * curr_atr
+            
+            # Exit: Momentum breaks (closes below fast EMA) or stop out
+            if curr_close < ema_fast or curr_close < trail_stop:
+                d.iloc[i, d.columns.get_loc("signal")] = -1
+                in_trade = False
+
+    return d
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_backtest(df: pd.DataFrame,
@@ -1218,6 +1281,7 @@ STRATEGIES = {
     "3 — Golden / Death Cross (50/200 EMA)":                  "ema_cross",
     "4 — ★ Custom: Donchian + Multi-EMA + Breakout":          "custom",
     "5 — ⚡ VWAP Breakout + Volume Surge + 200 EMA":          "vwap_volume",
+    "6 — 📈 EMA Trend + Volume Divergence":                   "ema_vol_div",
 }
 
 with st.sidebar:
