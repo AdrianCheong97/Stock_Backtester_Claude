@@ -1398,6 +1398,17 @@ with st.sidebar:
             help="Exit when price falls more than N × ATR below swing high"
         )
 
+    elif strat_key == "ema_vol_div":
+        st.markdown(
+            '<div class="custom-banner"><b>📈 EMA & VOL DIVERGENCE</b><br/>'
+            'Catches trend continuations backed by sudden volume spikes.</div>',
+            unsafe_allow_html=True,
+        )
+        params["ema_fast"]        = st.slider("Price EMA Fast", 5, 50, 10)
+        params["ema_slow"]        = st.slider("Price EMA Slow", 20, 200, 50)
+        params["vol_fast_period"] = st.slider("Volume MA Fast (Spike)", 2, 10, 5)
+        params["vol_slow_period"] = st.slider("Volume MA Slow (Baseline)", 10, 50, 20)
+        params["atr_trail"]       = st.slider("ATR Trailing Stop", 0.5, 5.0, 2.0, 0.25)
     st.markdown("---")
     run_btn = st.button("▶  RUN BACKTEST", use_container_width=True)
 
@@ -1430,7 +1441,7 @@ st.markdown("")
 # ─────────────────────────────────────────────────────────────────────────────
 #  STRATEGY DESCRIPTION TABS
 # ─────────────────────────────────────────────────────────────────────────────
-t1, t2, t3, t4, t5 = st.tabs(["RSI + Bollinger", "MACD Crossover", "EMA Cross", "★ Custom", "⚡ VWAP + Volume"])
+t1, t2, t3, t4, t5, t6 = st.tabs(["RSI + Bollinger", "MACD Crossover", "EMA Cross", "★ Custom", "⚡ VWAP + Volume", "📈 Vol Divergence"])
 
 with t1:
     st.markdown("""
@@ -1484,6 +1495,16 @@ Catches institutional-backed breakouts above VWAP with volume confirmation and a
 - **Best on**: Mid/large-cap equities and ETFs with reliable volume data; works well around earnings catalysts or sector rotations.
 """)
 
+
+with t6:
+    st.markdown("""
+**📈 EMA Trend + Volume Divergence**
+Capitalizes on established trends that receive a sudden influx of trading volume, indicating strong conviction.
+- 🟢 **Entry**: Price is in an uptrend (Close > Fast EMA > Slow EMA) *AND* a short-term volume MA crosses above a long-term volume MA.
+- 🔴 **Exit**: Price loses short-term momentum (closes below the Fast EMA) *OR* hits an ATR trailing stop.
+- **Best on**: Growth stocks and momentum-driven crypto assets where volume precedes massive price action.
+""")
+    
 st.markdown("---")
 
 # ── Crypto mode banner ───────────────────────────────────────────────────────
@@ -1539,6 +1560,7 @@ if run_btn:
             "ema_cross":   strategy_ema_cross,
             "custom":      strategy_custom,
             "vwap_volume": strategy_vwap_volume,
+            "ema_vol_div": strategy_ema_vol_divergence,
         }
         df_signals = fn_map[strat_key](df_raw.copy(), params)
         result     = run_backtest(df_signals, initial_capital, position_size, commission,
