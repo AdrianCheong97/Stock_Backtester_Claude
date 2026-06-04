@@ -228,8 +228,18 @@ else:
                 template="plotly_dark",
                 paper_bgcolor="#0d0f14",
                 plot_bgcolor="#0d0f14",
-                xaxis=dict(showgrid=True, gridcolor="#21262d", title="Timeline", titlefont=dict(family="IBM Plex Mono", color="#8b949e")),
-                yaxis=dict(showgrid=True, gridcolor="#21262d", title=yaxis_title, titlefont=dict(family="IBM Plex Mono", color="#8b949e")),
+                xaxis=dict(
+                    showgrid=True, 
+                    gridcolor="#21262d", 
+                    title=dict(text="Timeline", font=dict(family="IBM Plex Mono", color="#8b949e")),
+                    tickfont=dict(family="IBM Plex Mono", color="#8b949e")
+                ),
+                yaxis=dict(
+                    showgrid=True, 
+                    gridcolor="#21262d", 
+                    title=dict(text=yaxis_title, font=dict(family="IBM Plex Mono", color="#8b949e")),
+                    tickfont=dict(family="IBM Plex Mono", color="#8b949e")
+                ),
                 legend=dict(font=dict(family="IBM Plex Mono", size=11), bgcolor="rgba(0,0,0,0)", bordercolor="#21262d"),
                 margin=dict(l=40, r=40, t=20, b=40),
                 height=520
@@ -260,8 +270,8 @@ else:
                     plot_bgcolor="#0d0f14",
                     margin=dict(l=40, r=40, t=30, b=40),
                     height=450,
-                    xaxis=dict(gridcolor="#21262d", fontfamily="IBM Plex Mono"),
-                    yaxis=dict(gridcolor="#21262d", fontfamily="IBM Plex Mono")
+                    xaxis=dict(gridcolor="#21262d", tickfont=dict(family="IBM Plex Mono", color="#8b949e")),
+                    yaxis=dict(gridcolor="#21262d", tickfont=dict(family="IBM Plex Mono", color="#8b949e"))
                 )
                 st.markdown("### 🧮 Daily Percent Change Returns Correlation")
                 st.plotly_chart(fig_corr, use_container_width=True)
