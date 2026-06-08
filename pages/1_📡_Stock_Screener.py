@@ -409,9 +409,9 @@ with st.sidebar:
 
     # ── Performance Filters ───────────────────────────────────────────────
     st.markdown("**📈 Performance**")
-    ret1d_min,  ret1d_max  = st.slider("1-Day Return (%)",  -20.0, 20.0, (-20.0, 20.0), 0.5)
-    ret1m_min,  ret1m_max  = st.slider("1-Month Return (%)",-40.0, 40.0, (-40.0, 40.0), 1.0)
-    ret3m_min,  ret3m_max  = st.slider("3-Month Return (%)",-60.0, 60.0, (-60.0, 60.0), 2.0)
+    ret1d_min,  ret1d_max  = st.slider("1-Day Return (%)",  -20.0, 20.0, (-20.0, 80.0), 0.5)
+    ret1m_min,  ret1m_max  = st.slider("1-Month Return (%)",-40.0, 40.0, (-40.0, 300.0), 1.0)
+    ret3m_min,  ret3m_max  = st.slider("3-Month Return (%)",-60.0, 60.0, (-60.0, 1000.0), 2.0)
 
     st.markdown("---")
 
